@@ -1,0 +1,34 @@
+{
+  "rt_cd": "0",
+  "msg_cd": "KIOK0000",
+  "msg1": "정상처리 되었습니다.",
+  "output1": [
+    {
+      "ovrs_pdno": "AAPL",
+      "ovrs_item_name": "Apple Inc",
+      "ovrs_cblc_qty": "10",
+      "pchs_avg_pric": "185.50",
+      "now_pric2": "192.30",
+      "ovrs_stck_evlu_amt": "1923.00",
+      "frcr_evlu_pfls_amt": "68.00",
+      "tr_crcy_cd": "USD"
+    },
+    {
+      "ovrs_pdno": "NVDA",
+      "ovrs_item_name": "NVIDIA Corp",
+      "ovrs_cblc_qty": "5",
+      "pchs_avg_pric": "450.00",
+      "now_pric2": "498.50",
+      "ovrs_stck_evlu_amt": "2492.50",
+      "frcr_evlu_pfls_amt": "242.50",
+      "tr_crcy_cd": "USD"
+    }
+  ],
+  "output2": {
+    "frcr_pchs_amt1": "4102.50",
+    "ovrs_tot_pfls": "310.50",
+    "tot_evlu_pfls_amt": "310.50",
+    "tot_asst_amt": "16415.50",
+    "excc_amt": "10000.00"
+  }
+}

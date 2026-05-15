@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stockworldcup.local/schemas/order_plan.schema.json",
+  "title": "OrderPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manager_id",
+    "symbol",
+    "side",
+    "order_type",
+    "quantity",
+    "limit_price",
+    "estimated_amount",
+    "risk_status",
+    "idempotency_key"
+  ],
+  "properties": {
+    "manager_id": { "type": "string" },
+    "scenario_run_id": { "type": ["string", "null"] },
+    "scenario_item_id": { "type": ["string", "null"] },
+    "symbol": { "type": "string", "minLength": 1 },
+    "side": { "type": "string", "enum": ["buy", "sell"] },
+    "order_type": { "type": "string", "enum": ["limit"] },
+    "quantity": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+    "limit_price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+    "estimated_amount": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+    "ai_reason": { "type": ["string", "null"], "maxLength": 1200 },
+    "risk_status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+    "risk_reject_reason": { "type": ["string", "null"], "maxLength": 1200 },
+    "auto_execution": { "type": "boolean", "default": true },
+    "idempotency_key": { "type": "string", "minLength": 16 }
+  }
+}

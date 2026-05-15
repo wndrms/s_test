@@ -1,0 +1,13 @@
+target/
+.env
+# vendor는 .gitignore에 있으나 로컬 빌드에 필요하므로 명시적 포함
+!vendor/
+.git/
+docs/
+db/
+contracts/
+scripts/
+crates/web/src/
+crates/web/style/
+crates/web/index.html
+crates/web/Trunk.toml

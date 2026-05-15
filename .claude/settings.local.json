@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rustup show *)",
+      "Bash(cargo --version)",
+      "Bash(cargo check *)",
+      "Bash(grep -B2 \"unused imports: \\\\`BrokerOrderStatus\\\\`\")",
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(xargs ls *)",
+      "Bash(awk '{sum += $4} END {print \"Total tests:\", sum}')",
+      "Bash(gh api *)",
+      "Bash(trunk build *)",
+      "Bash(trunk serve *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/)",
+      "Bash(kill %1)",
+      "Bash(grep -B2 \"unused variable: \\\\`broker_connection_id\\\\`\")",
+      "Bash(grep -A3 \"unused variable: \\\\`broker_connection_id\\\\`\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/health)",
+      "Bash(docker buildx *)",
+      "Bash(docker compose *)",
+      "Bash(docker run --rm -v /Users/zaiden/dev/test/stock/ssl/ca-certificates.crt:/usr/local/share/ca-certificates/custom.crt:ro rust:1.78-slim-bookworm bash -c ' *)",
+      "Bash(docker builder *)",
+      "Bash(docker run *)",
+      "Bash(docker build *)",
+      "Bash(cargo vendor *)",
+      "Bash(rustc --version)",
+      "Bash(curl *)",
+      "Bash(tmux ls *)",
+      "Bash(cargo metadata *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(p['name']\\) for p in d['packages'] if p['name']=='lumos-web' for dep in p['dependencies'] if 'web' in dep['name'].lower\\(\\) or 'wasm' in dep['name'].lower\\(\\)]\")",
+      "Bash(cargo tree *)"
+    ]
+  }
+}

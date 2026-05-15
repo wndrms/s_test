@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stockworldcup.local/schemas/scenario_output.schema.json",
+  "title": "ScenarioOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "symbol",
+    "base_price",
+    "analyzed_at",
+    "analysis_summary",
+    "data_freshness",
+    "scenarios",
+    "recommended_action"
+  ],
+  "properties": {
+    "symbol": { "type": "string", "minLength": 1 },
+    "base_price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+    "analyzed_at": { "type": "string", "format": "date-time" },
+    "analysis_summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "analysis_detail": { "type": "string", "maxLength": 12000 },
+    "data_freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price_as_of", "account_as_of", "freshness_level"],
+      "properties": {
+        "price_as_of": { "type": "string", "format": "date-time" },
+        "account_as_of": { "type": "string", "format": "date-time" },
+        "news_as_of": { "type": ["string", "null"], "format": "date-time" },
+        "filing_as_of": { "type": ["string", "null"], "format": "date-time" },
+        "community_as_of": { "type": ["string", "null"], "format": "date-time" },
+        "freshness_level": { "type": "string", "enum": ["fresh", "stale", "blocking"] },
+        "warning": { "type": ["string", "null"], "maxLength": 600 }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "probability_pct",
+          "action",
+          "target_price",
+          "condition",
+          "strategy",
+          "reason",
+          "evidence_refs"
+        ],
+        "properties": {
+          "type": { "type": "string", "enum": ["bullish", "sideways", "bearish"] },
+          "probability_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+          "action": { "type": "string", "enum": ["buy", "sell", "hold", "watch"] },
+          "target_price": { "type": ["string", "null"], "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+          "stop_loss_price": { "type": ["string", "null"], "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+          "condition": { "type": "string", "minLength": 1, "maxLength": 1600 },
+          "strategy": { "type": "string", "minLength": 1, "maxLength": 1200 },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 1600 },
+          "risk": { "type": ["string", "null"], "maxLength": 1200 },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 12
+          }
+        }
+      }
+    },
+    "recommended_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "reason", "confidence_pct"],
+      "properties": {
+        "action": { "type": "string", "enum": ["buy", "sell", "hold", "watch"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1200 },
+        "confidence_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "order_intent": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["side", "order_type", "limit_price"],
+          "properties": {
+            "side": { "type": "string", "enum": ["buy", "sell"] },
+            "order_type": { "type": "string", "enum": ["limit"] },
+            "limit_price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+            "max_position_pct_hint": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+          }
+        }
+      }
+    }
+  }
+}

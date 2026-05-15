@@ -1,0 +1,23 @@
+/target
+.env
+ssl/
+docker-compose.local.yml
+*.env.local
+.sqlx
+vendor
+*.tar
+*.tar.gz
+Cargo.lock.bak
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
+

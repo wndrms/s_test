@@ -1,0 +1,37 @@
+[package]
+name = "lumos-worker"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "lumos-worker"
+path = "src/main.rs"
+
+[dependencies]
+lumos-domain = { path = "../domain" }
+lumos-app = { path = "../app" }
+lumos-infra = { path = "../infra", default-features = false }
+
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+rust_decimal.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+sqlx.workspace = true
+dotenvy.workspace = true
+
+[features]
+default = ["offline-fixtures"]
+offline-fixtures = ["lumos-infra/offline-fixtures"]
+online-kis = ["lumos-infra/online-kis"]
+online-naver = ["lumos-infra/online-naver"]
+online-opendart = ["lumos-infra/online-opendart"]
+online-sec = ["lumos-infra/online-sec"]
+online-telegram = ["lumos-infra/online-telegram"]
+live-trading = ["lumos-infra/live-trading"]

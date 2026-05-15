@@ -1,0 +1,25 @@
+[package]
+name = "lumos-web"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lumos-domain = { path = "../domain" }
+
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+chrono.workspace = true
+rust_decimal.workspace = true
+leptos.workspace = true
+leptos_meta.workspace = true
+leptos_router.workspace = true
+anyhow.workspace = true
+
+gloo-net = { version = "0.6", features = ["http"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Clipboard", "Navigator", "Storage", "Window"] }

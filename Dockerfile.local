@@ -1,0 +1,67 @@
+# ── 로컬 개발 전용 Dockerfile ─────────────────────────────────────────────────
+# 회사 네트워크 / VPN 환경: 의존성을 vendor로 오프라인 빌드합니다.
+# 일반 서버 배포에는 Dockerfile을 사용하세요.
+#
+# 사전 준비 (최초 1회, 또는 Cargo.lock 변경 시):
+#   cargo vendor --versioned-dirs
+#
+# vendor/ 폴더는 .gitignore에 포함되어 있어 커밋되지 않습니다.
+
+# ── Stage 1: builder ──────────────────────────────────────────────────────────
+FROM rust:1-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 모든 소스를 한 번에 복사 (BuildKit 레이어 순서 문제 회피)
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
+COPY vendor/ vendor/
+COPY migrations/ migrations/
+COPY fixtures/ fixtures/
+COPY prompts/ prompts/
+
+# web crate은 .dockerignore로 소스 제외됨 → 더미 파일 생성
+RUN mkdir -p crates/web/src && \
+    echo "fn main() {}" > crates/web/src/main.rs && \
+    echo "pub fn main() {}" > crates/web/src/lib.rs
+
+# vendor config 설정 + 전체 빌드를 하나의 RUN으로 처리
+RUN mkdir -p .cargo && \
+    echo '[source.crates-io]' > .cargo/config.toml && \
+    echo 'replace-with = "vendored-sources"' >> .cargo/config.toml && \
+    echo '' >> .cargo/config.toml && \
+    echo '[source.vendored-sources]' >> .cargo/config.toml && \
+    echo 'directory = "vendor"' >> .cargo/config.toml && \
+    cargo build --release --offline -p lumos-api -p lumos-worker
+
+# ── Stage 2: api runtime ──────────────────────────────────────────────────────
+FROM debian:bookworm-slim AS api
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /app/target/release/lumos-server /app/lumos-server
+COPY --from=builder /app/migrations /app/migrations/
+
+EXPOSE 5000
+CMD ["/app/lumos-server"]
+
+# ── Stage 3: worker runtime ───────────────────────────────────────────────────
+FROM debian:bookworm-slim AS worker
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /app/target/release/lumos-worker /app/lumos-worker
+COPY --from=builder /app/migrations /app/migrations/
+COPY --from=builder /app/fixtures /app/fixtures/
+
+CMD ["/app/lumos-worker"]
