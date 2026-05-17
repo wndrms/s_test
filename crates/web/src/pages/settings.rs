@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use crate::api::client::{get_dev_token, save_auth_token};
+use crate::api::client::get_dev_token;
 use crate::components::layout::{AppLayout, PageHeader};
 
 #[component]
@@ -33,7 +33,6 @@ fn DevTokenSection() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match get_dev_token(None).await {
                 Ok(resp) => {
-                    save_auth_token(&resp.token);
                     token_display.set(Some(resp.token));
                     user_id_display.set(Some(resp.user_id.to_string()));
                 }

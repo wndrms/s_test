@@ -28,6 +28,8 @@ pub struct OrderPlan {
     pub scenario_run_id: Option<Uuid>,
     pub scenario_item_id: Option<Uuid>,
     pub symbol_id: Uuid,
+    /// 주문 실행 시점에 symbol_repo 조회로 채워진다. DB에는 저장되지 않는다.
+    pub symbol_code: Option<String>,
     pub side: String,
     pub order_type: String,
     pub quantity: Decimal,

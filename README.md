@@ -62,6 +62,26 @@ domain ◀── app ◀── infra ◀── { api, worker }
 
 ---
 
+## 매니저-계좌 구조
+
+매니저(Manager)는 계좌(BrokerConnection)와 1:1로 연결됩니다.
+
+```
+broker_connections (계좌 정보 + KIS 자격증명)
+        │  1
+        │
+        │  N
+    managers (매니저 = AI 자동매매 전략 단위)
+        │
+        └──▶ order_plans → broker_orders
+```
+
+- **매니저 생성 시** `broker_connection_id`의 존재 여부와 소유자(user_id) 일치를 검증합니다.
+- **주문 실행 시** 매니저 → broker_connection 조회 → 계좌 환경(Real/Paper)에 맞는 KisClient를 생성하여 실행합니다.
+- `mode=paper`인 매니저는 PaperBroker, `mode=live`인 매니저는 KisClient(Real)를 사용합니다.
+
+---
+
 ## 시작하기
 
 ### 사전 요구 사항
@@ -79,24 +99,27 @@ cp .env.example .env
 
 ```env
 DATABASE_URL=postgres://user:password@localhost/lumos
+ENCRYPTION_KEY=<openssl rand -base64 32 으로 생성>
+LISTEN_ADDR=0.0.0.0:3000
 
-# 한국투자증권
+# 한국투자증권 (로컬 개발용 — 실제 값은 DB 암호화 저장 예정)
+KIS_ENV=paper            # paper | real
 KIS_APP_KEY=your_app_key
 KIS_APP_SECRET=your_app_secret
-KIS_ACCOUNT_NO=12345678
-KIS_ACCOUNT_PRODUCT=01
-KIS_ENV=paper          # paper | real
+KIS_ACCOUNT_NO=12345678  # 계좌번호 앞 8자리
+KIS_ACCOUNT_PRODUCT=01   # 계좌상품코드 뒤 2자리
 
-# LLM
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
-
-# JWT
+# JWT (개발용 기본값: "dev-secret-change-in-prod")
 JWT_SECRET=change_me_in_production
 
+# 프로덕션 환경 표시 (설정 시 dev token 엔드포인트 비활성화)
+# APP_ENV=production
+
+# LLM (선택)
+# OPENAI_API_KEY=sk-...
+
 # Telegram (선택)
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
+# TELEGRAM_BOT_TOKEN=
 ```
 
 ### DB 마이그레이션
@@ -126,8 +149,6 @@ tmux 세션 `lumos-dev`를 생성합니다.
 
 **Docker만 실행**
 
-일반 서버 / CI 환경 (`Dockerfile` 사용):
-
 ```bash
 docker compose up --build          # 포그라운드
 docker compose up --build -d       # 백그라운드
@@ -135,26 +156,11 @@ docker compose down                # 종료 (데이터 보존)
 docker compose down -v             # 종료 + DB 볼륨 삭제
 ```
 
-회사 네트워크 / VPN 환경 (`Dockerfile.local` + `docker-compose.local.yml` 사용):
-
-> Docker 빌드 시 네트워크 SSL 인터셉트로 crates.io 다운로드가 실패하는 환경에서 사용합니다.
-> 호스트에서 `cargo vendor`로 모든 의존성을 미리 받아 오프라인으로 빌드합니다.
-> `vendor/`와 `docker-compose.local.yml`은 `.gitignore`에 포함되어 커밋되지 않습니다.
+회사 네트워크 / VPN 환경 (`Dockerfile.local` 사용):
 
 ```bash
-# 1. 의존성 vendoring (최초 1회, Cargo.lock 변경 시 재실행)
 cargo vendor --versioned-dirs
-
-# 2. 실행
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
-```
-
-**서비스별 로그 확인**
-
-```bash
-docker compose logs -f api
-docker compose logs -f worker
-docker compose logs -f db
 ```
 
 **프론트엔드만 별도 실행**
@@ -163,13 +169,42 @@ docker compose logs -f db
 cd crates/web && trunk serve
 ```
 
-### 오프라인 개발 (네트워크 없이)
+---
 
-기본 feature는 `offline-fixtures`가 활성화되어 있어 KIS/Naver/LLM 호출 없이 fixture 데이터로 동작합니다.
+## 인증 (JWT)
+
+모든 `/api/*` 경로는 JWT Bearer 토큰이 필요합니다.
+
+### 개발용 토큰 발급
 
 ```bash
-cargo test --workspace
+# user_id 자동 생성
+curl -X POST http://localhost:3000/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# 특정 user_id 고정
+curl -X POST http://localhost:3000/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "00000000-0000-0000-0000-000000000001"}'
 ```
+
+응답:
+```json
+{
+  "token": "eyJ...",
+  "user_id": "00000000-0000-0000-0000-000000000001",
+  "expires_in_hours": 24
+}
+```
+
+이후 모든 요청에 헤더 추가:
+```
+Authorization: Bearer eyJ...
+```
+
+> **주의:** `APP_ENV=production` 설정 시 이 엔드포인트는 403을 반환합니다.  
+> 프로덕션에서는 별도 OAuth2/OIDC 인증으로 교체해야 합니다.
 
 ---
 
@@ -250,21 +285,47 @@ Step 4: Critic 검토
 
 ## API 엔드포인트
 
+### 인증 (인증 불필요)
+
 | Method | Path | 설명 |
 |--------|------|------|
-| `POST` | `/api/auth/login` | JWT 로그인 |
+| `POST` | `/api/auth/token` | 개발용 JWT 토큰 발급 |
+| `GET` | `/health` | 헬스체크 |
+
+### 매니저 (JWT 필요)
+
+| Method | Path | 설명 |
+|--------|------|------|
 | `GET` | `/api/managers` | 매니저 목록 |
-| `POST` | `/api/managers` | 매니저 생성 |
+| `POST` | `/api/managers` | 매니저 생성 (broker_connection_id 필수) |
+| `GET` | `/api/managers/:id` | 매니저 상세 |
+| `GET` | `/api/managers/:id/risk-policy` | 리스크 정책 조회 |
+| `POST` | `/api/managers/:id/auto-trade` | 자동매매 ON/OFF |
+
+### 시나리오 / 분석
+
+| Method | Path | 설명 |
+|--------|------|------|
 | `GET` | `/api/managers/:id/scenarios` | 시나리오 실행 목록 |
 | `POST` | `/api/managers/:id/scenarios` | 시나리오 수동 실행 |
 | `GET` | `/api/managers/:id/analysis-reports` | 분석 리포트 목록 |
+
+### 주문
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/api/managers/:id/order-plans` | 주문 계획 목록 |
+| `POST` | `/api/managers/:id/order-plans` | 시나리오 아이템 → 주문 계획 생성 |
+| `POST` | `/api/managers/:id/order-plans/:plan_id/execute` | 주문 실행 (`live-trading` feature 필요) |
+| `POST` | `/api/paper/orders` | 모의 주문 직접 생성 |
+
+### 포트폴리오
+
+| Method | Path | 설명 |
+|--------|------|------|
 | `GET` | `/api/managers/:id/holdings` | 보유 종목 |
 | `GET` | `/api/managers/:id/trades` | 체결 내역 |
-| `GET` | `/api/managers/:id/order-plans` | 주문 계획 목록 |
-| `POST` | `/api/managers/:id/order-plans` | 시나리오 아이템에서 주문 계획 생성 |
-| `POST` | `/api/managers/:id/order-plans/:plan_id/execute` | 주문 실행 (live-trading feature 필요) |
 | `GET` | `/api/managers/:id/schedule` | 스케줄 조회 |
-| `POST` | `/api/paper/orders` | 모의 주문 생성 (시나리오 없이 직접 생성) |
 
 ---
 
@@ -277,6 +338,16 @@ Step 4: Critic 검토
 
 ---
 
+## 오프라인 개발
+
+기본 feature는 `offline-fixtures`가 활성화되어 있어 KIS/Naver/LLM 호출 없이 fixture 데이터로 동작합니다.
+
+```bash
+cargo test --workspace
+```
+
+---
+
 ## 디렉토리 구조
 
 ```
@@ -285,7 +356,7 @@ Step 4: Critic 검토
 │   ├── domain/         # 도메인 모델, Port 트레이트
 │   ├── app/            # 서비스 레이어, Repository 트레이트
 │   ├── infra/          # 외부 API 구현체, DB 레포지토리
-│   │   ├── kis/        # KIS Open API 클라이언트
+│   │   ├── kis/        # KIS Open API 클라이언트 + PaperBroker
 │   │   ├── providers/  # Naver, DART, SEC, Telegram
 │   │   ├── scenario/   # LLM 구현체, Evidence Builder
 │   │   ├── db/         # SQLx 레포지토리
@@ -347,6 +418,7 @@ sqlx migrate run
 - KIS API 키, DB URL, JWT 시크릿은 반드시 환경 변수로 관리하세요.
 - `live-trading` feature는 실제 자산에 영향을 줍니다. 반드시 `paper` 환경에서 충분히 검증 후 활성화하세요.
 - API 키는 DB에 AES-GCM으로 암호화 저장됩니다. `ENCRYPTION_KEY` 분실 시 복구 불가합니다.
+- `APP_ENV=production` 설정 시 개발용 토큰 발급 엔드포인트(`/api/auth/token`)가 비활성화됩니다.
 - `global_kill_switch`를 활용해 비상 시 전체 자동매매를 즉시 중단할 수 있습니다.
 
 ---

@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Serialize)]
 pub struct ManagerResponse {
     pub id: Uuid,
+    pub broker_connection_id: Uuid,
     pub name: String,
     pub mode: String,
     pub region: String,
@@ -39,6 +40,7 @@ impl From<Manager> for ManagerResponse {
     fn from(m: Manager) -> Self {
         Self {
             id: m.id,
+            broker_connection_id: m.broker_connection_id,
             name: m.name,
             mode: format!("{:?}", m.mode).to_lowercase(),
             region: m.region.to_string(),

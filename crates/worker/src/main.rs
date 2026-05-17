@@ -10,6 +10,7 @@ use lumos_app::service::order_plan::OrderPlanService;
 use lumos_app::service::scenario::ScenarioService;
 use lumos_infra::crypto::AesGcmEncryptor;
 use lumos_infra::db::pg_pool;
+use lumos_infra::kis::{KisClient, KisEnvironment};
 
 use lumos_infra::db::repo::analysis_report::PgAnalysisReportRepository;
 use lumos_infra::db::repo::manager::{PgManagerRepository, PgRiskPolicyRepository};
@@ -19,7 +20,6 @@ use lumos_infra::db::repo::scenario::{
 };
 use lumos_infra::db::repo::schedule::{PgManagerScheduleRepository, PgScheduleRunRepository};
 use lumos_infra::db::repo::symbol::PgSymbolRepository;
-use lumos_infra::kis::client::{KisClient, KisEnvironment};
 use lumos_infra::scenario::mock_llm::MockLlmProvider;
 
 #[tokio::main]
@@ -39,6 +39,9 @@ async fn main() -> anyhow::Result<()> {
 
     let _encryptor =
         Arc::new(AesGcmEncryptor::from_base64(&encryption_key).context("invalid ENCRYPTION_KEY")?);
+
+    // KIS 클라이언트 (환경변수가 있으면 생성, 없으면 None)
+    let kis_client = build_kis_client_from_env().await?;
 
     let symbol_repo: Arc<dyn lumos_app::repo::symbol::SymbolRepository> =
         Arc::new(PgSymbolRepository::new(pool.clone()));
@@ -78,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
     let schedule_repo = Arc::new(PgManagerScheduleRepository::new(pool.clone()));
     let run_repo = Arc::new(PgScheduleRunRepository::new(pool.clone()));
 
-    let mut scheduler = scheduler::Scheduler::new(
+    let mut sched_builder = scheduler::Scheduler::new(
         schedule_repo,
         run_repo,
         scenario_svc,
@@ -88,11 +91,11 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_order_plan_svc(order_plan_svc);
 
-    if let Some(kis_client) = build_kis_client_from_env().await? {
-        scheduler = scheduler.with_kis_client(Arc::new(kis_client));
+    if let Some(client) = kis_client {
+        sched_builder = sched_builder.with_kis_client(Arc::new(client));
     }
 
-    let sched = Arc::new(scheduler);
+    let sched = Arc::new(sched_builder);
 
     tracing::info!("Lumos worker started");
     sched.run().await?;
@@ -100,22 +103,36 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn build_kis_client_from_env() -> anyhow::Result<Option<KisClient>> {
-    let Some(app_key) = optional_env("KIS_APP_KEY") else {
-        tracing::warn!("KIS_APP_KEY not set; KIS evidence collection is disabled");
-        return Ok(None);
-    };
+fn init_tracing() {
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+}
 
-    let app_secret = required_env("KIS_APP_SECRET")?;
-    let account_no = required_env("KIS_ACCOUNT_NO")?;
-    let account_product = optional_env("KIS_ACCOUNT_PRODUCT").unwrap_or_else(|| "01".to_string());
-    let env = match optional_env("KIS_ENV")
-        .unwrap_or_else(|| "paper".to_string())
-        .to_lowercase()
-        .as_str()
-    {
-        "real" => KisEnvironment::Real,
-        _ => KisEnvironment::Paper,
+/// KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO 가 모두 설정된 경우에만 KisClient를 반환합니다.
+async fn build_kis_client_from_env() -> anyhow::Result<Option<KisClient>> {
+    let app_key = std::env::var("KIS_APP_KEY").unwrap_or_default();
+    let app_secret = std::env::var("KIS_APP_SECRET").unwrap_or_default();
+    let account_no = std::env::var("KIS_ACCOUNT_NO").unwrap_or_default();
+    let account_product = std::env::var("KIS_ACCOUNT_PRODUCT").unwrap_or_else(|_| "01".to_string());
+
+    if app_key.is_empty() || app_secret.is_empty() || account_no.is_empty() {
+        tracing::warn!(
+            "KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO not set — KIS features disabled"
+        );
+        return Ok(None);
+    }
+
+    let env = match std::env::var("KIS_ENV").as_deref() {
+        Ok("real") => {
+            tracing::info!("KIS worker mode: REAL");
+            KisEnvironment::Real
+        }
+        _ => {
+            tracing::info!("KIS worker mode: PAPER (모의투자)");
+            KisEnvironment::Paper
+        }
     };
 
     let client = KisClient::new(env, app_key, app_secret, account_no, account_product);
@@ -123,29 +140,8 @@ async fn build_kis_client_from_env() -> anyhow::Result<Option<KisClient>> {
     #[cfg(feature = "online-kis")]
     {
         client.issue_access_token().await?;
-        tracing::info!("KIS client initialized with an access token");
+        tracing::info!("KIS access token initialized");
     }
 
-    #[cfg(not(feature = "online-kis"))]
-    tracing::info!("KIS client initialized in fixture mode");
-
     Ok(Some(client))
-}
-
-fn optional_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn required_env(key: &str) -> anyhow::Result<String> {
-    optional_env(key).with_context(|| format!("{key} not set"))
-}
-
-fn init_tracing() {
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
 }

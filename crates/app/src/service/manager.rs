@@ -5,11 +5,13 @@ use lumos_domain::model::manager::Manager;
 use lumos_domain::model::risk::RiskPolicy;
 
 use crate::error::{AppError, AppResult};
+use crate::repo::broker_connection::BrokerConnectionRepository;
 use crate::repo::manager::{CreateManagerInput, ManagerRepository, RiskPolicyRepository};
 
 pub struct ManagerService {
     managers: Arc<dyn ManagerRepository>,
     policies: Arc<dyn RiskPolicyRepository>,
+    broker_connections: Option<Arc<dyn BrokerConnectionRepository>>,
 }
 
 impl ManagerService {
@@ -17,7 +19,19 @@ impl ManagerService {
         managers: Arc<dyn ManagerRepository>,
         policies: Arc<dyn RiskPolicyRepository>,
     ) -> Self {
-        Self { managers, policies }
+        Self {
+            managers,
+            policies,
+            broker_connections: None,
+        }
+    }
+
+    pub fn with_broker_connection_repo(
+        mut self,
+        repo: Arc<dyn BrokerConnectionRepository>,
+    ) -> Self {
+        self.broker_connections = Some(repo);
+        self
     }
 
     pub async fn list_for_user(&self, user_id: Uuid) -> AppResult<Vec<Manager>> {
@@ -36,6 +50,23 @@ impl ManagerService {
     }
 
     pub async fn create(&self, input: CreateManagerInput) -> AppResult<Manager> {
+        // broker_connection 존재 및 소유자 검증
+        if let Some(bc_repo) = &self.broker_connections {
+            let conn = bc_repo
+                .find_by_id(input.broker_connection_id)
+                .await
+                .map_err(AppError::Internal)?
+                .ok_or_else(|| {
+                    AppError::NotFound(format!("broker_connection {}", input.broker_connection_id))
+                })?;
+
+            if conn.user_id != input.user_id {
+                return Err(AppError::Forbidden(
+                    "broker_connection does not belong to this user".to_string(),
+                ));
+            }
+        }
+
         let manager = self
             .managers
             .create(input)

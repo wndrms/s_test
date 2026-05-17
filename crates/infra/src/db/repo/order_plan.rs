@@ -46,6 +46,7 @@ impl From<OrderPlanRow> for OrderPlan {
             scenario_run_id: r.scenario_run_id,
             scenario_item_id: r.scenario_item_id,
             symbol_id: r.symbol_id,
+            symbol_code: None,
             side: r.side,
             order_type: r.order_type,
             quantity: r.quantity,

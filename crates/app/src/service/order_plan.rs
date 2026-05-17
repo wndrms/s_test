@@ -84,13 +84,21 @@ impl OrderPlanService {
                 ));
             }
 
+            let symbol_code = plan
+                .symbol_code
+                .clone()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    AppError::Validation("symbol_code not resolved for order plan".to_string())
+                })?;
+
             let side = if plan.side == "buy" {
                 OrderSide::Buy
             } else {
                 OrderSide::Sell
             };
             let req = LimitOrderRequest {
-                symbol_code: String::new(), // resolved by caller with symbol lookup
+                symbol_code,
                 side,
                 quantity: plan.quantity,
                 limit_price: plan.limit_price,

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use lumos_app::repo::analysis_report::AnalysisReportRepository;
 use lumos_app::repo::broker_connection::BrokerConnectionRepository;
+use lumos_app::repo::broker_order::BrokerOrderRepository;
 use lumos_app::repo::holdings::HoldingsRepository;
 use lumos_app::repo::manager::RiskPolicyRepository;
 use lumos_app::repo::order_plan::OrderPlanRepository;
@@ -20,7 +21,6 @@ pub struct AppState {
     pub db: PgPool,
     pub manager_service: Arc<ManagerService>,
     pub secret_service: Arc<SecretService>,
-    pub broker_connection_repo: Arc<dyn BrokerConnectionRepository>,
     pub scenario_service: Arc<ScenarioService>,
     pub symbol_repo: Arc<dyn SymbolRepository>,
     pub holdings_repo: Arc<dyn HoldingsRepository>,
@@ -32,4 +32,6 @@ pub struct AppState {
     pub scenario_item_repo: Arc<dyn ScenarioItemRepository>,
     pub risk_policy_repo: Arc<dyn RiskPolicyRepository>,
     pub notification_service: Arc<NotificationService>,
+    pub broker_connection_repo: Arc<dyn BrokerConnectionRepository>,
+    pub broker_order_repo: Arc<dyn BrokerOrderRepository>,
 }

@@ -10,6 +10,7 @@ mod error;
 mod routes;
 mod state;
 
+use lumos_app::repo::broker_connection::BrokerConnectionRepository;
 use lumos_app::service::manager::ManagerService;
 use lumos_app::service::notification::NotificationService;
 use lumos_app::service::scenario::ScenarioService;
@@ -18,6 +19,7 @@ use lumos_infra::crypto::AesGcmEncryptor;
 use lumos_infra::db::pg_pool;
 use lumos_infra::db::repo::analysis_report::PgAnalysisReportRepository;
 use lumos_infra::db::repo::broker_connection::PgBrokerConnectionRepository;
+use lumos_infra::db::repo::broker_order::PgBrokerOrderRepository;
 use lumos_infra::db::repo::holdings::PgHoldingsRepository;
 use lumos_infra::db::repo::manager::{PgManagerRepository, PgRiskPolicyRepository};
 use lumos_infra::db::repo::order_plan::PgOrderPlanRepository;
@@ -57,9 +59,6 @@ async fn main() -> anyhow::Result<()> {
     let policy_repo: Arc<dyn lumos_app::repo::manager::RiskPolicyRepository> =
         Arc::new(PgRiskPolicyRepository::new(pool.clone()));
     let secret_repo = Arc::new(PgSecretKeyRepository::new(pool.clone()));
-    let broker_connection_repo: Arc<
-        dyn lumos_app::repo::broker_connection::BrokerConnectionRepository,
-    > = Arc::new(PgBrokerConnectionRepository::new(pool.clone()));
     let symbol_repo: Arc<dyn lumos_app::repo::symbol::SymbolRepository> =
         Arc::new(PgSymbolRepository::new(pool.clone()));
     let evidence_repo = Arc::new(PgEvidenceCardRepository::new(pool.clone()));
@@ -76,8 +75,15 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(PgAnalysisReportRepository::new(pool.clone()));
     let order_plan_repo: Arc<dyn lumos_app::repo::order_plan::OrderPlanRepository> =
         Arc::new(PgOrderPlanRepository::new(pool.clone()));
+    let broker_connection_repo = Arc::new(PgBrokerConnectionRepository::new(pool.clone()));
+    let broker_order_repo: Arc<dyn lumos_app::repo::broker_order::BrokerOrderRepository> =
+        Arc::new(PgBrokerOrderRepository::new(pool.clone()));
 
-    let manager_service = Arc::new(ManagerService::new(manager_repo, Arc::clone(&policy_repo)));
+    let manager_service = Arc::new(
+        ManagerService::new(manager_repo, Arc::clone(&policy_repo)).with_broker_connection_repo(
+            Arc::clone(&broker_connection_repo) as Arc<dyn BrokerConnectionRepository>,
+        ),
+    );
     let secret_service = Arc::new(SecretService::new(secret_repo, encryptor));
     let scenario_service = Arc::new(
         ScenarioService::new(
@@ -98,7 +104,6 @@ async fn main() -> anyhow::Result<()> {
         db: pool,
         manager_service,
         secret_service,
-        broker_connection_repo,
         scenario_service,
         symbol_repo,
         holdings_repo,
@@ -110,6 +115,8 @@ async fn main() -> anyhow::Result<()> {
         scenario_item_repo,
         risk_policy_repo: policy_repo,
         notification_service,
+        broker_connection_repo: broker_connection_repo as Arc<dyn BrokerConnectionRepository>,
+        broker_order_repo,
     };
 
     let app = routes::router(app_state)

@@ -306,11 +306,18 @@ impl Scheduler {
                         plan.risk_status
                     );
                     if manager.auto_trade_enabled {
+                        // symbol_code를 채워서 실행 (symbol_repo 주입 없이 MVP에서는 스킵)
+                        // TODO: symbol_repo 주입 후 symbol_code 해결
+                        let mut plan_with_ctx = plan;
+                        plan_with_ctx.symbol_code = None; // execute_approved는 symbol_code 필수 → live-trading feature 없으면 no-op
                         if let Err(e) = order_plan_svc
-                            .execute_approved(&plan, manager.broker_connection_id)
+                            .execute_approved(&plan_with_ctx, manager.broker_connection_id)
                             .await
                         {
-                            tracing::warn!("execute_approved failed for plan {}: {e}", plan.id);
+                            tracing::warn!(
+                                "execute_approved failed for plan {}: {e}",
+                                plan_with_ctx.id
+                            );
                         }
                     }
                 }

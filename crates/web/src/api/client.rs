@@ -48,10 +48,23 @@ fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 
+async fn auth_token_for(path: &str) -> Result<Option<String>> {
+    if let Some(token) = auth_token() {
+        return Ok(Some(token));
+    }
+    if path == "/auth/token" {
+        return Ok(None);
+    }
+
+    let resp = request_dev_token(None).await?;
+    save_auth_token(&resp.token);
+    Ok(Some(resp.token))
+}
+
 async fn get_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T> {
     let url = format!("{}{}", base_url(), path);
     let mut req = gloo_net::http::Request::get(&url);
-    if let Some(token) = auth_token() {
+    if let Some(token) = auth_token_for(path).await? {
         req = req.header("Authorization", &format!("Bearer {token}"));
     }
 
@@ -75,7 +88,7 @@ async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
 ) -> Result<T> {
     let url = format!("{}{}", base_url(), path);
     let mut req = gloo_net::http::Request::post(&url);
-    if let Some(token) = auth_token() {
+    if let Some(token) = auth_token_for(path).await? {
         req = req.header("Authorization", &format!("Bearer {token}"));
     }
 
@@ -162,9 +175,16 @@ pub async fn create_manager(req: CreateManagerRequest) -> Result<ManagerDto> {
 // ─── Auth (Dev) ───────────────────────────────────────────────────────────────
 
 pub async fn get_dev_token(user_id: Option<Uuid>) -> Result<DevTokenResponse> {
+    let resp = request_dev_token(user_id).await?;
+    save_auth_token(&resp.token);
+    Ok(resp)
+}
+
+async fn request_dev_token(user_id: Option<Uuid>) -> Result<DevTokenResponse> {
     #[derive(Serialize)]
     struct Req {
         user_id: Option<Uuid>,
     }
+
     post_json("/auth/token", &Req { user_id }).await
 }
