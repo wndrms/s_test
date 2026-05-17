@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use uuid::Uuid;
 
 use super::types::{
@@ -48,17 +50,20 @@ fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 
-async fn auth_token_for(path: &str) -> Result<Option<String>> {
-    if let Some(token) = auth_token() {
-        return Ok(Some(token));
-    }
-    if path == "/auth/token" {
-        return Ok(None);
-    }
+fn auth_token_for(path: &str) -> Pin<Box<dyn Future<Output = Result<Option<String>>>>> {
+    let path = path.to_string();
+    Box::pin(async move {
+        if let Some(token) = auth_token() {
+            return Ok(Some(token));
+        }
+        if path == "/auth/token" {
+            return Ok(None);
+        }
 
-    let resp = request_dev_token(None).await?;
-    save_auth_token(&resp.token);
-    Ok(Some(resp.token))
+        let resp = request_dev_token(None).await?;
+        save_auth_token(&resp.token);
+        Ok(Some(resp.token))
+    })
 }
 
 async fn get_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T> {
