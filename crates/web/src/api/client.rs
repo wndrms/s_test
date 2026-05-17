@@ -4,6 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 use uuid::Uuid;
 
+use lumos_domain::model::broker::BrokerAccount;
 use super::types::{
     AnalysisReportDto, HoldingDto, ManagerDto, RiskPolicyDto, ScenarioItemDto, ScenarioRunDto,
     TradeDto,
@@ -19,6 +20,14 @@ pub struct CreateManagerRequest {
     pub region: String,
     pub base_currency: String,
     pub initial_capital: f64,
+    #[serde(default)]
+    pub kis_app_key: Option<String>,
+    #[serde(default)]
+    pub kis_app_secret: Option<String>,
+    #[serde(default)]
+    pub kis_account_no: Option<String>,
+    #[serde(default)]
+    pub kis_account_product: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,6 +213,20 @@ pub async fn get_analysis_report(manager_id: Uuid, report_id: Uuid) -> Result<An
 
 pub async fn create_manager(req: CreateManagerRequest) -> Result<ManagerDto> {
     post_json("/managers", &req).await
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidateKisConnectionRequest {
+    pub app_key: String,
+    pub app_secret: String,
+    pub account_no: String,
+    pub account_product: Option<String>,
+    pub mode: String,
+    pub region: String,
+}
+
+pub async fn validate_kis_connection(req: ValidateKisConnectionRequest) -> Result<BrokerAccount> {
+    post_json("/managers/validate-kis", &req).await
 }
 
 // ─── Auth (Dev) ───────────────────────────────────────────────────────────────

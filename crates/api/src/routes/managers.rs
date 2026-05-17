@@ -9,9 +9,10 @@ use uuid::Uuid;
 use crate::auth::AuthUser;
 use lumos_app::error::AppError;
 use lumos_app::repo::manager::CreateManagerInput;
-use lumos_domain::model::broker::BrokerEnvironment;
+use lumos_domain::model::broker::{BrokerAccount, BrokerEnvironment};
 use lumos_domain::model::manager::{Manager, ManagerMode};
 use lumos_domain::model::symbol::{Currency, Region};
+use lumos_infra::kis::{KisClient, KisEnvironment};
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -19,6 +20,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_managers).post(create_manager))
+        .route("/validate-kis", post(validate_kis_connection))
         .route("/:id", get(get_manager))
         .route("/:id/risk-policy", get(get_risk_policy))
         .route("/:id/auto-trade", post(set_auto_trade))
@@ -60,6 +62,25 @@ pub struct CreateManagerRequest {
     pub region: String,
     pub base_currency: String,
     pub initial_capital: rust_decimal::Decimal,
+    #[serde(default)]
+    pub kis_app_key: Option<String>,
+    #[serde(default)]
+    pub kis_app_secret: Option<String>,
+    #[serde(default)]
+    pub kis_account_no: Option<String>,
+    #[serde(default)]
+    pub kis_account_product: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateKisConnectionRequest {
+    pub app_key: String,
+    pub app_secret: String,
+    pub account_no: String,
+    #[serde(default)]
+    pub account_product: Option<String>,
+    pub mode: String,
+    pub region: String,
 }
 
 async fn list_managers(
@@ -105,8 +126,18 @@ async fn create_manager(
         "USD" => Currency::Usd,
         _ => Currency::Krw,
     };
-    let broker_connection_id =
-        resolve_broker_connection_id(&state, auth_user.user_id, req.broker_connection_id).await?;
+    let broker_connection_id = resolve_broker_connection_id(
+        &state,
+        auth_user.user_id,
+        req.broker_connection_id,
+        req.kis_app_key.as_deref(),
+        req.kis_app_secret.as_deref(),
+        req.kis_account_no.as_deref(),
+        req.kis_account_product.as_deref(),
+        mode.clone(),
+        region.clone(),
+    )
+    .await?;
 
     let input = CreateManagerInput {
         user_id: auth_user.user_id,
@@ -126,13 +157,89 @@ async fn create_manager(
     Ok(Json(ManagerResponse::from(manager)))
 }
 
+async fn validate_kis_connection(
+    State(_state): State<AppState>,
+    _auth_user: AuthUser,
+    Json(req): Json<ValidateKisConnectionRequest>,
+) -> ApiResult<Json<BrokerAccount>> {
+    let mode = match req.mode.as_str() {
+        "live" => ManagerMode::Live,
+        _ => ManagerMode::Paper,
+    };
+    let region = match req.region.as_str() {
+        "US" => Region::Us,
+        _ => Region::Kr,
+    };
+    let environment = match mode {
+        ManagerMode::Live => BrokerEnvironment::Real,
+        _ => BrokerEnvironment::Paper,
+    };
+    let product = req
+        .account_product
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "01".to_string());
+    let client = build_kis_client(
+        &req.app_key,
+        &req.app_secret,
+        &req.account_no,
+        &product,
+        environment,
+    );
+    let account = validate_kis_balance(&client, region).await?;
+    Ok(Json(account))
+}
+
 async fn resolve_broker_connection_id(
     state: &AppState,
     user_id: Uuid,
     requested_id: Option<Uuid>,
+    kis_app_key: Option<&str>,
+    kis_app_secret: Option<&str>,
+    kis_account_no: Option<&str>,
+    kis_account_product: Option<&str>,
+    mode: ManagerMode,
+    region: Region,
 ) -> ApiResult<Uuid> {
     if let Some(id) = requested_id.filter(|id| *id != Uuid::nil()) {
         return Ok(id);
+    }
+
+    let has_kis_creds = kis_app_key
+        .and_then(|v| (!v.trim().is_empty()).then_some(v))
+        .is_some()
+        && kis_app_secret
+            .and_then(|v| (!v.trim().is_empty()).then_some(v))
+            .is_some()
+        && kis_account_no
+            .and_then(|v| (!v.trim().is_empty()).then_some(v))
+            .is_some();
+
+    if has_kis_creds {
+        let app_key = kis_app_key.unwrap().trim();
+        let app_secret = kis_app_secret.unwrap().trim();
+        let account_no = kis_account_no.unwrap().trim();
+        let account_product = kis_account_product
+            .and_then(|v| {
+                let trimmed = v.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            .unwrap_or_else(|| "01".to_string());
+
+        return create_kis_broker_connection(
+            state,
+            user_id,
+            app_key,
+            app_secret,
+            account_no,
+            &account_product,
+            mode,
+            region,
+        )
+        .await;
     }
 
     let existing = state
@@ -145,6 +252,89 @@ async fn resolve_broker_connection_id(
     }
 
     create_env_broker_connection(state, user_id).await
+}
+
+async fn create_kis_broker_connection(
+    state: &AppState,
+    user_id: Uuid,
+    app_key: &str,
+    app_secret: &str,
+    account_no: &str,
+    account_product: &str,
+    mode: ManagerMode,
+    region: Region,
+) -> ApiResult<Uuid> {
+    let environment = match mode {
+        ManagerMode::Live => BrokerEnvironment::Real,
+        _ => BrokerEnvironment::Paper,
+    };
+    let client = build_kis_client(app_key, app_secret, account_no, account_product, environment.clone());
+    validate_kis_balance(&client, region).await?;
+
+    let app_key_secret = state
+        .secret_service
+        .store(user_id, "kis".to_string(), format!("kis_app_key:{}", account_no), app_key)
+        .await?;
+    let app_secret_secret = state
+        .secret_service
+        .store(user_id, "kis".to_string(), format!("kis_app_secret:{}", account_no), app_secret)
+        .await?;
+    let account_no_encrypted = state
+        .secret_service
+        .encrypt_payload(account_no.as_bytes())
+        .map_err(ApiError::from)?;
+    let account_no_masked = format!(
+        "{}-{}",
+        state.secret_service.mask(account_no),
+        account_product
+    );
+
+    let conn = state
+        .broker_connection_repo
+        .create(
+            user_id,
+            environment,
+            account_no_masked,
+            account_no_encrypted,
+            app_key_secret.id,
+            app_secret_secret.id,
+        )
+        .await
+        .map_err(|e| ApiError::from(AppError::Internal(e)))?;
+
+    Ok(conn.id)
+}
+
+async fn validate_kis_balance(
+    client: &KisClient,
+    region: Region,
+) -> ApiResult<BrokerAccount> {
+    let (account, _) = match region {
+        Region::Kr => client.domestic_balance().await,
+        Region::Us => client.overseas_balance("NAS").await,
+    }
+    .map_err(|e| ApiError::from(AppError::Internal(e)))?;
+    Ok(account)
+}
+
+fn build_kis_client(
+    app_key: &str,
+    app_secret: &str,
+    account_no: &str,
+    account_product: &str,
+    environment: BrokerEnvironment,
+) -> KisClient {
+    let env = match environment {
+        BrokerEnvironment::Real => KisEnvironment::Real,
+        BrokerEnvironment::Paper => KisEnvironment::Paper,
+    };
+    KisClient::new(
+        env,
+        app_key.to_string(),
+        app_secret.to_string(),
+        account_no.to_string(),
+        account_product.to_string(),
+    )
 }
 
 async fn create_env_broker_connection(state: &AppState, user_id: Uuid) -> ApiResult<Uuid> {

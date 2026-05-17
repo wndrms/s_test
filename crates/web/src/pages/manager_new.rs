@@ -1,8 +1,9 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
-use crate::api::client::{create_manager, CreateManagerRequest};
+use crate::api::client::{create_manager, CreateManagerRequest, validate_kis_connection, ValidateKisConnectionRequest};
 use crate::components::layout::{AppLayout, PageHeader};
+use lumos_domain::model::broker::BrokerAccount;
 
 #[component]
 pub fn ManagerNewPage() -> impl IntoView {
@@ -10,6 +11,12 @@ pub fn ManagerNewPage() -> impl IntoView {
     let mode = RwSignal::new("paper".to_string());
     let region = RwSignal::new("KR".to_string());
     let initial_capital = RwSignal::new(String::new());
+    let kis_app_key = RwSignal::new(String::new());
+    let kis_app_secret = RwSignal::new(String::new());
+    let kis_account_no = RwSignal::new(String::new());
+    let kis_account_product = RwSignal::new("01".to_string());
+    let connection_result = RwSignal::new(Option::<BrokerAccount>::None);
+    let checking_connection = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
     let submitting = RwSignal::new(false);
 
@@ -22,6 +29,10 @@ pub fn ManagerNewPage() -> impl IntoView {
         let mode_val = mode.get();
         let region_val = region.get();
         let capital_str = initial_capital.get();
+        let kis_app_key_val = kis_app_key.get();
+        let kis_app_secret_val = kis_app_secret.get();
+        let kis_account_no_val = kis_account_no.get();
+        let kis_account_product_val = kis_account_product.get();
 
         if name_val.trim().is_empty() {
             error.set(Some("매니저 이름을 입력해주세요.".to_string()));
@@ -48,13 +59,16 @@ pub fn ManagerNewPage() -> impl IntoView {
 
         leptos::task::spawn_local(async move {
             let req = CreateManagerRequest {
-                // 개발 환경에서는 서버가 JWT user_id와 .env KIS 설정으로 기본 연결을 보강한다.
                 broker_connection_id: None,
                 name: name_val.trim().to_string(),
                 mode: mode_val,
                 region: region_val,
                 base_currency,
                 initial_capital: capital,
+                kis_app_key: (!kis_app_key_val.trim().is_empty()).then_some(kis_app_key_val.trim().to_string()),
+                kis_app_secret: (!kis_app_secret_val.trim().is_empty()).then_some(kis_app_secret_val.trim().to_string()),
+                kis_account_no: (!kis_account_no_val.trim().is_empty()).then_some(kis_account_no_val.trim().to_string()),
+                kis_account_product: (!kis_account_product_val.trim().is_empty()).then_some(kis_account_product_val.trim().to_string()),
             };
 
             match create_manager(req).await {
@@ -67,6 +81,57 @@ pub fn ManagerNewPage() -> impl IntoView {
                     submitting.set(false);
                 }
             }
+        });
+    };
+
+    let on_check_connection = move |ev: leptos::ev::MouseEvent| {
+        ev.prevent_default();
+
+        let mode_val = mode.get();
+        let region_val = region.get();
+        let app_key_val = kis_app_key.get();
+        let app_secret_val = kis_app_secret.get();
+        let account_no_val = kis_account_no.get();
+        let account_product_val = kis_account_product.get();
+
+        if app_key_val.trim().is_empty()
+            || app_secret_val.trim().is_empty()
+            || account_no_val.trim().is_empty()
+        {
+            error.set(Some("KIS app key, app secret, 계좌번호를 모두 입력해주세요.".to_string()));
+            return;
+        }
+
+        error.set(None);
+        connection_result.set(None);
+        checking_connection.set(true);
+
+        let err = error.clone();
+        let result = connection_result.clone();
+        let checking = checking_connection.clone();
+
+        leptos::task::spawn_local(async move {
+            let req = ValidateKisConnectionRequest {
+                app_key: app_key_val.trim().to_string(),
+                app_secret: app_secret_val.trim().to_string(),
+                account_no: account_no_val.trim().to_string(),
+                account_product: (!account_product_val.trim().is_empty())
+                    .then_some(account_product_val.trim().to_string()),
+                mode: mode_val,
+                region: region_val,
+            };
+
+            match validate_kis_connection(req).await {
+                Ok(account) => {
+                    result.set(Some(account));
+                    err.set(None);
+                }
+                Err(e) => {
+                    err.set(Some(format!("계좌 확인 실패: {e}")));
+                }
+            }
+
+            checking.set(false);
         });
     };
 
@@ -130,6 +195,67 @@ pub fn ManagerNewPage() -> impl IntoView {
                             "Risk Gate 기준: 단일 주문 ≤ 100만원, 종목 비중 ≤ 자산의 5%"
                         </p>
                     </div>
+
+                    <div class="form-group">
+                        <label class="form-label">"KIS App Key"</label>
+                        <input
+                            type="text"
+                            class="form-input"
+                            placeholder="KIS APP_KEY"
+                            prop:value=kis_app_key
+                            on:input=move |ev| kis_app_key.set(event_target_value(&ev))
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">"KIS App Secret"</label>
+                        <input
+                            type="password"
+                            class="form-input"
+                            placeholder="KIS APP_SECRET"
+                            prop:value=kis_app_secret
+                            on:input=move |ev| kis_app_secret.set(event_target_value(&ev))
+                        />
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">"KIS 계좌번호"</label>
+                            <input
+                                type="text"
+                                class="form-input"
+                                placeholder="계좌번호 앞 8자리"
+                                prop:value=kis_account_no
+                                on:input=move |ev| kis_account_no.set(event_target_value(&ev))
+                            />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">"상품코드"</label>
+                            <input
+                                type="text"
+                                class="form-input"
+                                placeholder="예: 01"
+                                prop:value=kis_account_product
+                                on:input=move |ev| kis_account_product.set(event_target_value(&ev))
+                            />
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <button
+                            type="button"
+                            class="btn btn-secondary btn-block"
+                            on:click=on_check_connection
+                            prop:disabled=checking_connection
+                        >
+                            {move || if checking_connection.get() { "계좌 확인 중..." } else { "KIS 잔고 확인" }}
+                        </button>
+                    </div>
+
+                    {move || connection_result.get().as_ref().map(|account| view! {
+                        <div class="alert alert-success">
+                            <p>{format!("계좌 연결 확인됨: 현금 {} {}, 총자산 {} {}", account.cash, account.currency, account.total_equity, account.currency)}</p>
+                            <p>{format!("조회 시각: {}", account.as_of)}</p>
+                        </div>
+                    })}
 
                     {move || error.get().map(|e| view! {
                         <div class="alert alert-error">{e}</div>
