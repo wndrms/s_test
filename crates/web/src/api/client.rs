@@ -38,6 +38,12 @@ pub fn save_auth_token(token: &str) {
     }
 }
 
+fn clear_auth_token() {
+    if let Some(storage) = local_storage() {
+        let _ = storage.remove_item(AUTH_TOKEN_STORAGE_KEY);
+    }
+}
+
 fn auth_token() -> Option<String> {
     local_storage()?
         .get_item(AUTH_TOKEN_STORAGE_KEY)
@@ -67,24 +73,37 @@ fn auth_token_for(path: &str) -> Pin<Box<dyn Future<Output = Result<Option<Strin
 }
 
 async fn get_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T> {
-    let url = format!("{}{}", base_url(), path);
-    let mut req = gloo_net::http::Request::get(&url);
-    if let Some(token) = auth_token_for(path).await? {
-        req = req.header("Authorization", &format!("Bearer {token}"));
-    }
+    get_json_internal(path).await
+}
 
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("GET {url} failed"))?;
-    if !resp.ok() {
-        anyhow::bail!("GET {url} returned {}", resp.status());
+async fn get_json_internal<T: serde::de::DeserializeOwned>(path: &str) -> Result<T> {
+    let url = format!("{}{}", base_url(), path);
+    let mut retry = true;
+
+    loop {
+        let mut req = gloo_net::http::Request::get(&url);
+        if let Some(token) = auth_token_for(path).await? {
+            req = req.header("Authorization", &format!("Bearer {token}"));
+        }
+
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("GET {url} failed"))?;
+        if resp.status() == 401 && retry {
+            clear_auth_token();
+            retry = false;
+            continue;
+        }
+        if !resp.ok() {
+            anyhow::bail!("GET {url} returned {}", resp.status());
+        }
+        let data = resp
+            .json::<T>()
+            .await
+            .with_context(|| format!("GET {url} json parse failed"))?;
+        return Ok(data);
     }
-    let data = resp
-        .json::<T>()
-        .await
-        .with_context(|| format!("GET {url} json parse failed"))?;
-    Ok(data)
 }
 
 async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
@@ -92,25 +111,35 @@ async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
     body: &B,
 ) -> Result<T> {
     let url = format!("{}{}", base_url(), path);
-    let mut req = gloo_net::http::Request::post(&url);
-    if let Some(token) = auth_token_for(path).await? {
-        req = req.header("Authorization", &format!("Bearer {token}"));
-    }
+    let mut retry = true;
 
-    let req = req
-        .json(body)
-        .with_context(|| format!("POST {url} serialize failed"))?;
+    loop {
+        let mut req = gloo_net::http::Request::post(&url);
+        if let Some(token) = auth_token_for(path).await? {
+            req = req.header("Authorization", &format!("Bearer {token}"));
+        }
 
-    let resp = req
-        .send()
-        .await
-        .with_context(|| format!("POST {url} failed"))?;
-    if !resp.ok() {
-        anyhow::bail!("POST {url} returned {}", resp.status());
+        let req = req
+            .json(body)
+            .with_context(|| format!("POST {url} serialize failed"))?;
+
+        let resp = req
+            .send()
+            .await
+            .with_context(|| format!("POST {url} failed"))?;
+        if resp.status() == 401 && retry {
+            clear_auth_token();
+            retry = false;
+            continue;
+        }
+        if !resp.ok() {
+            anyhow::bail!("POST {url} returned {}", resp.status());
+        }
+        return resp
+            .json::<T>()
+            .await
+            .with_context(|| format!("POST {url} json parse failed"));
     }
-    resp.json::<T>()
-        .await
-        .with_context(|| format!("POST {url} json parse failed"))
 }
 
 // ─── Manager ─────────────────────────────────────────────────────────────────
