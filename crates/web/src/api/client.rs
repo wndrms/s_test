@@ -215,7 +215,7 @@ pub async fn create_manager(req: CreateManagerRequest) -> Result<ManagerDto> {
     post_json("/managers", &req).await
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ValidateKisConnectionRequest {
     pub app_key: String,
     pub app_secret: String,
@@ -227,6 +227,16 @@ pub struct ValidateKisConnectionRequest {
 
 pub async fn validate_kis_connection(req: ValidateKisConnectionRequest) -> Result<BrokerAccount> {
     post_json("/managers/validate-kis", &req).await
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct VerifyKisAuthResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+pub async fn verify_kis_auth(req: ValidateKisConnectionRequest) -> Result<VerifyKisAuthResponse> {
+    post_json("/managers/verify-kis-auth", &req).await
 }
 
 // ─── Auth (Dev) ───────────────────────────────────────────────────────────────

@@ -211,7 +211,17 @@ impl KisClient {
 
     pub async fn domestic_balance(&self) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
         #[cfg(feature = "offline-fixtures")]
-        return self.domestic_balance_fixture();
+        {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/kis/fixtures/domestic_balance_sample.json"
+            );
+            if std::path::Path::new(path).exists() {
+                return self.domestic_balance_fixture();
+            }
+            // fallback to online when fixture is missing
+            return self.domestic_balance_online().await;
+        }
         #[cfg(not(feature = "offline-fixtures"))]
         self.domestic_balance_online().await
     }
@@ -323,7 +333,17 @@ impl KisClient {
         exchange: &str,
     ) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
         #[cfg(feature = "offline-fixtures")]
-        return self.overseas_balance_fixture(exchange);
+        {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/kis/fixtures/overseas_balance_sample.json"
+            );
+            if std::path::Path::new(path).exists() {
+                return self.overseas_balance_fixture(exchange);
+            }
+            // fallback to online when fixture is missing
+            return self.overseas_balance_online(exchange).await;
+        }
         #[cfg(not(feature = "offline-fixtures"))]
         self.overseas_balance_online(exchange).await
     }

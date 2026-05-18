@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
-use crate::api::client::{create_manager, CreateManagerRequest, validate_kis_connection, ValidateKisConnectionRequest};
+use crate::api::client::{create_manager, CreateManagerRequest, validate_kis_connection, verify_kis_auth, ValidateKisConnectionRequest, VerifyKisAuthResponse};
 use crate::components::layout::{AppLayout, PageHeader};
 use lumos_domain::model::broker::BrokerAccount;
 
@@ -16,7 +16,9 @@ pub fn ManagerNewPage() -> impl IntoView {
     let kis_account_no = RwSignal::new(String::new());
     let kis_account_product = RwSignal::new("01".to_string());
     let connection_result = RwSignal::new(Option::<BrokerAccount>::None);
+    let auth_result = RwSignal::new(Option::<VerifyKisAuthResponse>::None);
     let checking_connection = RwSignal::new(false);
+    let checking_auth = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
     let submitting = RwSignal::new(false);
 
@@ -104,11 +106,14 @@ pub fn ManagerNewPage() -> impl IntoView {
 
         error.set(None);
         connection_result.set(None);
+        auth_result.set(None);
         checking_connection.set(true);
 
         let err = error.clone();
         let result = connection_result.clone();
+        let auth_res = auth_result.clone();
         let checking = checking_connection.clone();
+        let checking_a = checking_auth.clone();
 
         leptos::task::spawn_local(async move {
             let req = ValidateKisConnectionRequest {
@@ -117,10 +122,32 @@ pub fn ManagerNewPage() -> impl IntoView {
                 account_no: account_no_val.trim().to_string(),
                 account_product: (!account_product_val.trim().is_empty())
                     .then_some(account_product_val.trim().to_string()),
-                mode: mode_val,
-                region: region_val,
+                mode: mode_val.clone(),
+                region: region_val.clone(),
             };
 
+            // Step 1: Verify KIS Auth Token
+            checking_a.set(true);
+            match verify_kis_auth(req.clone()).await {
+                Ok(auth) => {
+                    auth_res.set(Some(auth.clone()));
+                    if !auth.success {
+                        err.set(Some(auth.message));
+                        checking.set(false);
+                        checking_a.set(false);
+                        return;
+                    }
+                }
+                Err(e) => {
+                    err.set(Some(format!("토큰 확인 실패: {e}")));
+                    checking.set(false);
+                    checking_a.set(false);
+                    return;
+                }
+            }
+            checking_a.set(false);
+
+            // Step 2: Validate KIS Connection (get balance)
             match validate_kis_connection(req).await {
                 Ok(account) => {
                     result.set(Some(account));
@@ -246,9 +273,15 @@ pub fn ManagerNewPage() -> impl IntoView {
                             on:click=on_check_connection
                             prop:disabled=checking_connection
                         >
-                            {move || if checking_connection.get() { "계좌 확인 중..." } else { "KIS 잔고 확인" }}
+                            {move || if checking_connection.get() { "계좌 확인 중..." } else { "KIS 계좌 확인" }}
                         </button>
                     </div>
+
+                    {move || auth_result.get().as_ref().map(|auth| view! {
+                        <div class=if auth.success { "alert alert-success" } else { "alert alert-warning" }>
+                            <p>{auth.message.clone()}</p>
+                        </div>
+                    })}
 
                     {move || connection_result.get().as_ref().map(|account| view! {
                         <div class="alert alert-success">

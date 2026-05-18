@@ -21,6 +21,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_managers).post(create_manager))
         .route("/validate-kis", post(validate_kis_connection))
+        .route("/verify-kis-auth", post(verify_kis_auth))
         .route("/:id", get(get_manager))
         .route("/:id/risk-policy", get(get_risk_policy))
         .route("/:id/auto-trade", post(set_auto_trade))
@@ -36,6 +37,12 @@ pub struct ManagerResponse {
     pub base_currency: String,
     pub auto_trade_enabled: bool,
     pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VerifyKisAuthResponse {
+    pub success: bool,
+    pub message: String,
 }
 
 impl From<Manager> for ManagerResponse {
@@ -189,6 +196,40 @@ async fn validate_kis_connection(
     Ok(Json(account))
 }
 
+async fn verify_kis_auth(
+    State(_state): State<AppState>,
+    _auth_user: AuthUser,
+    Json(req): Json<ValidateKisConnectionRequest>,
+) -> ApiResult<Json<VerifyKisAuthResponse>> {
+    let environment = match req.mode.as_str() {
+        "live" => BrokerEnvironment::Real,
+        _ => BrokerEnvironment::Paper,
+    };
+    let product = req
+        .account_product
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "01".to_string());
+    let client = build_kis_client(
+        &req.app_key,
+        &req.app_secret,
+        &req.account_no,
+        &product,
+        environment,
+    );
+    
+    // Try to issue a token to verify credentials
+    match client.issue_access_token().await {
+        Ok(_) => Ok(Json(VerifyKisAuthResponse {
+            success: true,
+            message: "KIS 인증 성공".to_string(),
+        })),
+        Err(e) => Ok(Json(VerifyKisAuthResponse {
+            success: false,
+            message: format!("KIS 인증 실패: {}", e),
+        })),
+    }
+}
+
 async fn resolve_broker_connection_id(
     state: &AppState,
     user_id: Uuid,
@@ -309,6 +350,11 @@ async fn validate_kis_balance(
     client: &KisClient,
     region: Region,
 ) -> ApiResult<BrokerAccount> {
+    // Ensure we have a bearer token before calling online endpoints.
+    // If token issuance fails, surface as internal error.
+    if let Err(e) = client.issue_access_token().await {
+        return Err(ApiError::from(AppError::Internal(e)));
+    }
     let (account, _) = match region {
         Region::Kr => client.domestic_balance().await,
         Region::Us => client.overseas_balance("NAS").await,
