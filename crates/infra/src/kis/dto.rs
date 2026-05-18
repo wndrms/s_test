@@ -4,23 +4,36 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct TokenResponse {
-    #[serde(default, alias = "access_token")]
+    #[serde(default)]
     pub access_token: Option<String>,
-    #[serde(default, alias = "accessToken")]
-    pub access_token_alt: Option<String>,
     #[serde(default)]
     pub token_type: Option<String>,
     #[serde(default)]
     pub expires_in: Option<i64>,
     #[serde(default)]
     pub access_token_token_expired: Option<String>,
+    // Error fields
+    #[serde(default)]
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub error_description: Option<String>,
 }
 
 impl TokenResponse {
     pub fn get_token(&self) -> Option<String> {
-        self.access_token
-            .clone()
-            .or_else(|| self.access_token_alt.clone())
+        self.access_token.clone()
+    }
+    
+    pub fn is_error(&self) -> bool {
+        self.error_code.is_some()
+    }
+    
+    pub fn error_message(&self) -> Option<String> {
+        if let (Some(code), Some(desc)) = (&self.error_code, &self.error_description) {
+            Some(format!("{}: {}", code, desc))
+        } else {
+            self.error_description.clone()
+        }
     }
 }
 

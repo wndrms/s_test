@@ -68,6 +68,11 @@ impl KisClient {
     }
 
     pub async fn issue_access_token(&self) -> Result<String> {
+        // Return cached token if available to avoid rate limiting (1 request per minute)
+        if let Some(token) = self.access_token.read().await.as_ref() {
+            return Ok(token.clone());
+        }
+
         let url = format!("{}/oauth2/tokenP", self.env.base_url());
         let body = serde_json::json!({
             "grant_type": "client_credentials",
@@ -91,6 +96,12 @@ impl KisClient {
         
         let token_resp: TokenResponse = serde_json::from_str(&text)
             .with_context(|| format!("KIS token parse failed: {}", text))?;
+        
+        // Check for API error response
+        if token_resp.is_error() {
+            let error_msg = token_resp.error_message().unwrap_or_else(|| "Unknown error".to_string());
+            return Err(anyhow::anyhow!("KIS token error: {}", error_msg));
+        }
         
         let token = token_resp
             .get_token()
