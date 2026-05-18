@@ -4,10 +4,24 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct TokenResponse {
-    pub access_token: String,
-    pub token_type: String,
-    pub expires_in: i64,
-    pub access_token_token_expired: String,
+    #[serde(default, alias = "access_token")]
+    pub access_token: Option<String>,
+    #[serde(default, alias = "accessToken")]
+    pub access_token_alt: Option<String>,
+    #[serde(default)]
+    pub token_type: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<i64>,
+    #[serde(default)]
+    pub access_token_token_expired: Option<String>,
+}
+
+impl TokenResponse {
+    pub fn get_token(&self) -> Option<String> {
+        self.access_token
+            .clone()
+            .or_else(|| self.access_token_alt.clone())
+    }
 }
 
 // ── Domestic Quote (FHKST01010100) ────────────────────────────────────────────

@@ -81,8 +81,21 @@ impl KisClient {
             .send()
             .await
             .context("KIS token request failed")?;
-        let token_resp: TokenResponse = resp.json().await.context("KIS token parse failed")?;
-        let token = token_resp.access_token.clone();
+        
+        let text = resp
+            .text()
+            .await
+            .context("KIS token response body read failed")?;
+        
+        eprintln!("DEBUG KIS Token Response: {}", text);
+        
+        let token_resp: TokenResponse = serde_json::from_str(&text)
+            .with_context(|| format!("KIS token parse failed: {}", text))?;
+        
+        let token = token_resp
+            .get_token()
+            .ok_or_else(|| anyhow::anyhow!("KIS token response missing access_token field"))?;
+        
         *self.access_token.write().await = Some(token.clone());
         Ok(token)
     }
