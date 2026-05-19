@@ -6,8 +6,8 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use lumos_app::repo::analysis_report::{
-    AnalysisReport, AnalysisReportRepository, ChartAnnotation, CreateAnalysisReportInput,
-    CreateChartAnnotationInput,
+    AnalysisReport, AnalysisReportRepository, ChartAnnotation,
+    CreateAnalysisReportInput, CreateChartAnnotationInput,
 };
 use lumos_domain::model::scenario::{
     DataFreshnessLevel, EvidenceCard, EvidenceSourceType, SentimentLabel,
@@ -176,10 +176,7 @@ impl AnalysisReportRepository for PgAnalysisReportRepository {
         Ok(())
     }
 
-    async fn create_annotation(
-        &self,
-        input: CreateChartAnnotationInput,
-    ) -> Result<ChartAnnotation> {
+    async fn create_annotation(&self, input: CreateChartAnnotationInput) -> Result<ChartAnnotation> {
         let row: AnnotationRow = sqlx::query_as::<_, AnnotationRow>(
             r#"INSERT INTO chart_annotations
                (analysis_report_id, symbol_id, annotation_type, price, label, color_hint)
@@ -199,11 +196,13 @@ impl AnalysisReportRepository for PgAnalysisReportRepository {
     }
 
     async fn update_scenario_item_report(&self, item_id: Uuid, report_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE scenario_items SET analysis_report_id = $1 WHERE id = $2")
-            .bind(report_id)
-            .bind(item_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE scenario_items SET analysis_report_id = $1 WHERE id = $2",
+        )
+        .bind(report_id)
+        .bind(item_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

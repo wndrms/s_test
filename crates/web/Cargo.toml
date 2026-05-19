@@ -22,4 +22,4 @@ anyhow.workspace = true
 gloo-net = { version = "0.6", features = ["http"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Clipboard", "Navigator", "Storage", "Window"] }
+web-sys = { version = "0.3", features = ["Clipboard", "Navigator", "Window"] }

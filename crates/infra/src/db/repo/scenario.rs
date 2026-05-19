@@ -376,7 +376,10 @@ fn scenario_action_str(a: &ScenarioAction) -> &'static str {
 
 #[async_trait]
 impl ScenarioItemRepository for PgScenarioItemRepository {
-    async fn create_batch(&self, items: Vec<CreateScenarioItemInput>) -> Result<Vec<ScenarioItem>> {
+    async fn create_batch(
+        &self,
+        items: Vec<CreateScenarioItemInput>,
+    ) -> Result<Vec<ScenarioItem>> {
         let mut result = Vec::with_capacity(items.len());
         for input in items {
             let item = &input.item;

@@ -8,12 +8,7 @@ use lumos_domain::model::user::{SecretKey, User};
 pub trait UserRepository: Send + Sync {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
-    async fn create(
-        &self,
-        email: Option<String>,
-        display_name: Option<String>,
-        password_hash: Option<String>,
-    ) -> Result<User>;
+    async fn create(&self, email: Option<String>, display_name: Option<String>, password_hash: Option<String>) -> Result<User>;
 }
 
 #[async_trait]

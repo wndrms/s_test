@@ -47,15 +47,14 @@ impl From<BrokerConnectionRow> for BrokerConnection {
     }
 }
 
-const SELECT_COLS: &str =
-    "id, user_id, broker, environment, account_no_masked, verified_at, created_at, updated_at";
+const SELECT_COLS: &str = "id, user_id, broker, environment, account_no_masked, verified_at, created_at, updated_at";
 
 #[async_trait]
 impl BrokerConnectionRepository for PgBrokerConnectionRepository {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<BrokerConnection>> {
-        let row: Option<BrokerConnectionRow> = sqlx::query_as::<_, BrokerConnectionRow>(&format!(
-            "SELECT {SELECT_COLS} FROM broker_connections WHERE id = $1"
-        ))
+        let row: Option<BrokerConnectionRow> = sqlx::query_as::<_, BrokerConnectionRow>(
+            &format!("SELECT {SELECT_COLS} FROM broker_connections WHERE id = $1"),
+        )
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
@@ -85,13 +84,13 @@ impl BrokerConnectionRepository for PgBrokerConnectionRepository {
             BrokerEnvironment::Real => "real",
             BrokerEnvironment::Paper => "paper",
         };
-        let row: BrokerConnectionRow = sqlx::query_as::<_, BrokerConnectionRow>(&format!(
-            r#"INSERT INTO broker_connections
+        let row: BrokerConnectionRow = sqlx::query_as::<_, BrokerConnectionRow>(
+            &format!(r#"INSERT INTO broker_connections
                (user_id, broker, environment, account_no_masked, account_no_encrypted,
                 app_key_secret_id, app_secret_secret_id)
                VALUES ($1, 'kis', $2, $3, $4, $5, $6)
-               RETURNING {SELECT_COLS}"#
-        ))
+               RETURNING {SELECT_COLS}"#),
+        )
         .bind(user_id)
         .bind(env_str)
         .bind(account_no_masked)
@@ -104,12 +103,12 @@ impl BrokerConnectionRepository for PgBrokerConnectionRepository {
     }
 
     async fn set_verified(&self, id: Uuid) -> Result<BrokerConnection> {
-        let row: BrokerConnectionRow = sqlx::query_as::<_, BrokerConnectionRow>(&format!(
-            r#"UPDATE broker_connections
+        let row: BrokerConnectionRow = sqlx::query_as::<_, BrokerConnectionRow>(
+            &format!(r#"UPDATE broker_connections
                SET verified_at = now(), updated_at = now()
                WHERE id = $1
-               RETURNING {SELECT_COLS}"#
-        ))
+               RETURNING {SELECT_COLS}"#),
+        )
         .bind(id)
         .fetch_one(&self.pool)
         .await?;

@@ -9,8 +9,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use lumos_domain::model::broker::{
-    BrokerAccount, BrokerFill, BrokerOrderResponse, BrokerOrderStatus, BrokerPosition, BuyingPower,
-    BuyingPowerRequest, CancelOrderRequest, LimitOrderRequest, OrderFillQuery, OrderSide,
+    BrokerAccount, BrokerFill, BrokerOrderResponse, BrokerOrderStatus, BrokerPosition,
+    BuyingPower, BuyingPowerRequest, CancelOrderRequest, LimitOrderRequest, OrderFillQuery,
+    OrderSide,
 };
 use lumos_domain::model::symbol::Currency;
 use lumos_domain::port::broker::Broker;
@@ -103,7 +104,9 @@ impl PaperBroker {
         quotes: HashMap<String, Decimal>,
     ) -> Self {
         let quotes = Arc::new(quotes);
-        let source = Arc::new(move |code: &str| quotes.get(code).copied().unwrap_or(dec!(0)));
+        let source = Arc::new(move |code: &str| {
+            quotes.get(code).copied().unwrap_or(dec!(0))
+        });
         Self::new(broker_connection_id, initial_cash, currency, source)
     }
 
@@ -120,16 +123,15 @@ impl PaperBroker {
                 }
                 state.cash -= amount;
 
-                let pos =
-                    state
-                        .positions
-                        .entry(order.symbol_code.clone())
-                        .or_insert(PaperPosition {
-                            symbol_code: order.symbol_code.clone(),
-                            quantity: Decimal::ZERO,
-                            avg_price: fill_price,
-                            current_price: fill_price,
-                        });
+                let pos = state
+                    .positions
+                    .entry(order.symbol_code.clone())
+                    .or_insert(PaperPosition {
+                        symbol_code: order.symbol_code.clone(),
+                        quantity: Decimal::ZERO,
+                        avg_price: fill_price,
+                        current_price: fill_price,
+                    });
 
                 let total_cost = pos.avg_price * pos.quantity + fill_price * order.quantity;
                 let new_qty = pos.quantity + order.quantity;
@@ -306,10 +308,7 @@ mod tests {
     #[tokio::test]
     async fn buy_updates_cash_and_position() {
         let broker = make_broker(dec!(1000000));
-        broker
-            .place_limit_order(buy_req("005930", dec!(10), dec!(75000)))
-            .await
-            .unwrap();
+        broker.place_limit_order(buy_req("005930", dec!(10), dec!(75000))).await.unwrap();
 
         let account = broker.get_account().await.unwrap();
         assert_eq!(account.cash, dec!(250000));
@@ -322,14 +321,8 @@ mod tests {
     #[tokio::test]
     async fn sell_after_buy_updates_pnl() {
         let broker = make_broker(dec!(1000000));
-        broker
-            .place_limit_order(buy_req("005930", dec!(10), dec!(70000)))
-            .await
-            .unwrap();
-        broker
-            .place_limit_order(sell_req("005930", dec!(10), dec!(75000)))
-            .await
-            .unwrap();
+        broker.place_limit_order(buy_req("005930", dec!(10), dec!(70000))).await.unwrap();
+        broker.place_limit_order(sell_req("005930", dec!(10), dec!(75000))).await.unwrap();
 
         let positions = broker.get_positions().await.unwrap();
         assert!(positions.is_empty());
@@ -341,22 +334,15 @@ mod tests {
     #[tokio::test]
     async fn insufficient_cash_rejected() {
         let broker = make_broker(dec!(100));
-        let result = broker
-            .place_limit_order(buy_req("005930", dec!(10), dec!(75000)))
-            .await;
+        let result = broker.place_limit_order(buy_req("005930", dec!(10), dec!(75000))).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn oversell_rejected() {
         let broker = make_broker(dec!(1000000));
-        broker
-            .place_limit_order(buy_req("005930", dec!(5), dec!(75000)))
-            .await
-            .unwrap();
-        let result = broker
-            .place_limit_order(sell_req("005930", dec!(10), dec!(75000)))
-            .await;
+        broker.place_limit_order(buy_req("005930", dec!(5), dec!(75000))).await.unwrap();
+        let result = broker.place_limit_order(sell_req("005930", dec!(10), dec!(75000))).await;
         assert!(result.is_err());
     }
 }

@@ -184,3 +184,4 @@ impl From<SecretKeyRow> for SecretKey {
         }
     }
 }
+

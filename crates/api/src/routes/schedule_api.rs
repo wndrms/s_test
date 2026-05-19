@@ -14,7 +14,8 @@ use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/", get(get_schedule).patch(upsert_schedule))
+    Router::new()
+        .route("/", get(get_schedule).patch(upsert_schedule))
 }
 
 // ─── Response types ───────────────────────────────────────────────────────────

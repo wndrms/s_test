@@ -101,9 +101,7 @@ impl SecEdgarClient {
             .filter(|(_, form)| matches!(form.as_str(), "10-K" | "10-Q" | "8-K" | "6-K"))
             .take(10)
             .map(|(i, form)| {
-                let filed_at = filings
-                    .filing_date
-                    .get(i)
+                let filed_at = filings.filing_date.get(i)
                     .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
                     .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
                     .unwrap_or_else(Utc::now);
@@ -111,9 +109,7 @@ impl SecEdgarClient {
                 let accession = filings.accession_number.get(i).cloned().unwrap_or_default();
                 let accession_clean = accession.replace('-', "");
                 let doc = filings.primary_document.get(i).cloned().unwrap_or_default();
-                let title = filings
-                    .primary_doc_description
-                    .get(i)
+                let title = filings.primary_doc_description.get(i)
                     .cloned()
                     .unwrap_or_else(|| form.clone());
 
@@ -160,20 +156,14 @@ fn mock_sec_filings(symbol: &Symbol) -> Vec<DisclosureItem> {
     vec![
         DisclosureItem {
             title: format!("[MOCK] {} Annual Report on Form 10-K", symbol.code),
-            corp_name: symbol
-                .name_en
-                .clone()
-                .unwrap_or_else(|| symbol.code.clone()),
+            corp_name: symbol.name_en.clone().unwrap_or_else(|| symbol.code.clone()),
             filed_at: Utc::now(),
             doc_type: "10-K".to_string(),
             url: Some("https://www.sec.gov/".to_string()),
         },
         DisclosureItem {
             title: format!("[MOCK] {} Current Report on Form 8-K", symbol.code),
-            corp_name: symbol
-                .name_en
-                .clone()
-                .unwrap_or_else(|| symbol.code.clone()),
+            corp_name: symbol.name_en.clone().unwrap_or_else(|| symbol.code.clone()),
             filed_at: Utc::now(),
             doc_type: "8-K".to_string(),
             url: None,
@@ -192,9 +182,9 @@ mod tests {
 
     #[test]
     fn known_cik_lookup() {
+        use uuid::Uuid;
         use chrono::Utc;
         use lumos_domain::model::symbol::{Currency, Region, Symbol};
-        use uuid::Uuid;
 
         let sym = Symbol {
             id: Uuid::nil(),

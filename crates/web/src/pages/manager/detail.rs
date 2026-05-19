@@ -19,22 +19,22 @@ enum Tab {
 impl Tab {
     fn label(self) -> &'static str {
         match self {
-            Tab::Scenario => "시나리오",
-            Tab::Holdings => "보유",
-            Tab::Trades => "거래",
-            Tab::Analysis => "분석",
-            Tab::Schedule => "스케줄",
-            Tab::Settings => "설정",
+            Tab::Scenario  => "시나리오",
+            Tab::Holdings  => "보유",
+            Tab::Trades    => "거래",
+            Tab::Analysis  => "분석",
+            Tab::Schedule  => "스케줄",
+            Tab::Settings  => "설정",
         }
     }
     fn path_suffix(self) -> &'static str {
         match self {
-            Tab::Scenario => "",
-            Tab::Holdings => "/holdings",
-            Tab::Trades => "/trades",
-            Tab::Analysis => "/analysis",
-            Tab::Schedule => "/schedule",
-            Tab::Settings => "/settings",
+            Tab::Scenario  => "",
+            Tab::Holdings  => "/holdings",
+            Tab::Trades    => "/trades",
+            Tab::Analysis  => "/analysis",
+            Tab::Schedule  => "/schedule",
+            Tab::Settings  => "/settings",
         }
     }
 }
@@ -76,7 +76,9 @@ fn ManagerDetailInner(manager: ManagerDto) -> impl IntoView {
     let id = manager.id;
     let active_tab = RwSignal::new(Tab::Scenario);
 
-    let tab_href = move |tab: Tab| format!("/managers/{id}{}", tab.path_suffix());
+    let tab_href = move |tab: Tab| {
+        format!("/managers/{id}{}", tab.path_suffix())
+    };
 
     view! {
         <div>

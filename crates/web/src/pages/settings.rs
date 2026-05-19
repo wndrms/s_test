@@ -45,9 +45,7 @@ fn DevTokenSection() -> impl IntoView {
     };
 
     let copy_token = move |_| {
-        let Some(token) = token_display.get() else {
-            return;
-        };
+        let Some(token) = token_display.get() else { return };
 
         let window = match web_sys::window() {
             Some(w) => w,
@@ -147,11 +145,7 @@ fn SystemInfoSection() -> impl IntoView {
 #[component]
 fn FeatureFlagSection() -> impl IntoView {
     let flags = [
-        (
-            "offline-fixtures",
-            true,
-            "fixture JSON으로 외부 API 대체 (기본)",
-        ),
+        ("offline-fixtures", true, "fixture JSON으로 외부 API 대체 (기본)"),
         ("online-kis", false, "KIS 실시간 API"),
         ("online-naver", false, "네이버 뉴스 API"),
         ("online-opendart", false, "DART 공시 API"),

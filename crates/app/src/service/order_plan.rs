@@ -61,7 +61,8 @@ impl OrderPlanService {
     pub async fn execute_approved(
         &self,
         plan: &OrderPlan,
-        #[allow(unused_variables)] broker_connection_id: Uuid,
+        #[allow(unused_variables)]
+        broker_connection_id: Uuid,
     ) -> AppResult<()> {
         #[cfg(not(feature = "live-trading"))]
         return Err(AppError::Validation(
@@ -74,9 +75,10 @@ impl OrderPlanService {
                 .broker
                 .as_ref()
                 .ok_or_else(|| AppError::Validation("broker not configured".to_string()))?;
-            let broker_order_repo = self.broker_order_repo.as_ref().ok_or_else(|| {
-                AppError::Validation("broker_order_repo not configured".to_string())
-            })?;
+            let broker_order_repo = self
+                .broker_order_repo
+                .as_ref()
+                .ok_or_else(|| AppError::Validation("broker_order_repo not configured".to_string()))?;
 
             if plan.risk_status != RiskStatus::Approved {
                 return Err(AppError::Validation(
@@ -84,19 +86,10 @@ impl OrderPlanService {
                 ));
             }
 
-            let symbol_code = plan
-                .symbol_code
-                .clone()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    AppError::Validation("symbol_code not resolved for order plan".to_string())
-                })?;
+            let symbol_code = plan.symbol_code.clone().filter(|s| !s.is_empty())
+                .ok_or_else(|| AppError::Validation("symbol_code not resolved for order plan".to_string()))?;
 
-            let side = if plan.side == "buy" {
-                OrderSide::Buy
-            } else {
-                OrderSide::Sell
-            };
+            let side = if plan.side == "buy" { OrderSide::Buy } else { OrderSide::Sell };
             let req = LimitOrderRequest {
                 symbol_code,
                 side,
@@ -150,7 +143,9 @@ impl OrderPlanService {
             }
         };
 
-        let limit_price = item.target_price.unwrap_or(dec!(0));
+        let limit_price = item
+            .target_price
+            .unwrap_or(dec!(0));
         if limit_price.is_zero() {
             return Err(AppError::Validation(
                 "scenario item has no target price".to_string(),
@@ -191,7 +186,10 @@ impl OrderPlanService {
         }
         .to_string();
 
-        let idempotency_key = format!("{}:{}:{}", item.scenario_run_id, scenario_item_id, side_str);
+        let idempotency_key = format!(
+            "{}:{}:{}",
+            item.scenario_run_id, scenario_item_id, side_str
+        );
 
         let plan = self
             .order_plan_repo
@@ -221,11 +219,7 @@ impl OrderPlanService {
         Ok(plan)
     }
 
-    pub async fn list_for_manager(
-        &self,
-        manager_id: Uuid,
-        limit: i64,
-    ) -> AppResult<Vec<OrderPlan>> {
+    pub async fn list_for_manager(&self, manager_id: Uuid, limit: i64) -> AppResult<Vec<OrderPlan>> {
         self.order_plan_repo
             .find_by_manager(manager_id, limit)
             .await
@@ -248,8 +242,7 @@ impl OrderPlanService {
             .map_err(AppError::Internal)?
             .unwrap_or_else(|| lumos_domain::model::risk::RiskPolicy::default_for(manager_id));
 
-        let ctx =
-            OrderContext::new_simple(manager_id, symbol_id, side.clone(), quantity, limit_price);
+        let ctx = OrderContext::new_simple(manager_id, symbol_id, side.clone(), quantity, limit_price);
         let risk_result = evaluate(&policy, &ctx);
 
         let (risk_status, risk_reject_reason) = if risk_result.passed {

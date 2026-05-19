@@ -171,11 +171,7 @@ mod tests {
     async fn target_price_scaled_from_base() {
         let llm = MockLlmProvider::new();
         let output = llm.generate_scenario(dummy_input()).await.unwrap();
-        let bullish = output
-            .scenarios
-            .iter()
-            .find(|s| s.scenario_type == ScenarioType::Bullish)
-            .unwrap();
+        let bullish = output.scenarios.iter().find(|s| s.scenario_type == ScenarioType::Bullish).unwrap();
         // 75000 * 1.10 = 82500
         assert_eq!(bullish.target_price, Some(dec!(82500)));
     }

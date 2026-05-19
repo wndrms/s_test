@@ -10,11 +10,12 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+
 /// JWT 클레임
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // user_id (UUID 문자열)
-    pub exp: i64,    // Unix timestamp
+    pub sub: String,   // user_id (UUID 문자열)
+    pub exp: i64,      // Unix timestamp
     pub iat: i64,
 }
 
@@ -36,12 +37,16 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
     type Rejection = (StatusCode, axum::Json<serde_json::Value>);
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<AuthUser>().cloned().ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                axum::Json(serde_json::json!({"error": "unauthorized"})),
-            )
-        })
+        parts
+            .extensions
+            .get::<AuthUser>()
+            .cloned()
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"error": "unauthorized"})),
+                )
+            })
     }
 }
 
@@ -50,8 +55,7 @@ pub async fn jwt_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, axum::Json<serde_json::Value>)> {
-    let jwt_secret =
-        std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev-secret-change-in-prod".to_string());
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev-secret-change-in-prod".to_string());
 
     let token = extract_bearer(req.headers()).ok_or_else(|| {
         (
@@ -102,10 +106,7 @@ pub fn issue_token(user_id: Uuid, secret: &str, ttl_hours: i64) -> anyhow::Resul
 }
 
 fn extract_bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
-    let value = headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?;
+    let value = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
     value.strip_prefix("Bearer ")
 }
 

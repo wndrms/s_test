@@ -139,12 +139,7 @@ pub trait LlmProvider: Send + Sync {
         let evidence_ids = cards.iter().map(|c| c.id).collect();
         let news_cards: Vec<_> = cards
             .iter()
-            .filter(|c| {
-                matches!(
-                    c.source_type,
-                    EvidenceSourceType::News | EvidenceSourceType::Community
-                )
-            })
+            .filter(|c| matches!(c.source_type, EvidenceSourceType::News | EvidenceSourceType::Community))
             .collect();
 
         let high_risk_keywords = detect_high_risk_keywords(&news_cards);
@@ -225,25 +220,14 @@ pub trait LlmProvider: Send + Sync {
 
 fn detect_high_risk_keywords(cards: &[&EvidenceCard]) -> Vec<String> {
     const HIGH_RISK: &[&str] = &[
-        "거래정지",
-        "상장폐지",
-        "횡령",
-        "배임",
-        "감사의견 거절",
-        "유상증자",
-        "전환사채",
-        "파산",
-        "부도",
-        "리콜",
-        "소송",
+        "거래정지", "상장폐지", "횡령", "배임", "감사의견 거절",
+        "유상증자", "전환사채", "파산", "부도", "리콜", "소송",
         "압수수색",
     ];
     let mut found = vec![];
     for card in cards {
         for kw in HIGH_RISK {
-            if (card.title.contains(kw) || card.summary.contains(kw))
-                && !found.contains(&kw.to_string())
-            {
+            if (card.title.contains(kw) || card.summary.contains(kw)) && !found.contains(&kw.to_string()) {
                 found.push(kw.to_string());
             }
         }

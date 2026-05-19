@@ -5,9 +5,7 @@ use chrono::NaiveTime;
 use chrono::Utc;
 use uuid::Uuid;
 
-use lumos_domain::model::schedule::{
-    ManagerSchedule, ScheduleRun, ScheduleRunStatus, ScheduleSlot,
-};
+use lumos_domain::model::schedule::{ManagerSchedule, ScheduleRun, ScheduleRunStatus, ScheduleSlot};
 
 #[async_trait]
 pub trait ManagerScheduleRepository: Send + Sync {
@@ -39,8 +37,12 @@ pub trait ScheduleRunRepository: Send + Sync {
 #[async_trait]
 pub trait ManagerScheduleWriteRepository: Send + Sync {
     /// schedule_id 반환. manager_id당 유일한 스케줄을 upsert.
-    async fn upsert_schedule(&self, manager_id: Uuid, market: &str, timezone: &str)
-        -> Result<Uuid>;
+    async fn upsert_schedule(
+        &self,
+        manager_id: Uuid,
+        market: &str,
+        timezone: &str,
+    ) -> Result<Uuid>;
 
     async fn upsert_slot(
         &self,
@@ -52,5 +54,9 @@ pub trait ManagerScheduleWriteRepository: Send + Sync {
     ) -> Result<()>;
 
     /// 주어진 times 목록에 없는 슬롯을 disabled로 처리
-    async fn disable_slots_not_in(&self, schedule_id: Uuid, times: &[NaiveTime]) -> Result<()>;
+    async fn disable_slots_not_in(
+        &self,
+        schedule_id: Uuid,
+        times: &[NaiveTime],
+    ) -> Result<()>;
 }

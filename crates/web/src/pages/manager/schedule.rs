@@ -14,13 +14,8 @@ fn generate_krx_slots() -> Vec<String> {
     loop {
         slots.push(format!("{:02}:{:02}", h, m));
         m += 5;
-        if m >= 60 {
-            m = 0;
-            h += 1;
-        }
-        if h > 15 || (h == 15 && m > 30) {
-            break;
-        }
+        if m >= 60 { m = 0; h += 1; }
+        if h > 15 || (h == 15 && m > 30) { break; }
     }
     slots
 }
@@ -32,13 +27,8 @@ fn generate_us_slots() -> Vec<String> {
     loop {
         slots.push(format!("{:02}:{:02} ET", h, m));
         m += 5;
-        if m >= 60 {
-            m = 0;
-            h += 1;
-        }
-        if h > 16 || (h == 16 && m > 0) {
-            break;
-        }
+        if m >= 60 { m = 0; h += 1; }
+        if h > 16 || (h == 16 && m > 0) { break; }
     }
     slots
 }
@@ -47,23 +37,17 @@ fn generate_us_slots() -> Vec<String> {
 pub fn ScheduleTab() -> impl IntoView {
     let market = RwSignal::new("KRX".to_string());
 
-    let krx_slots: Vec<SlotState> = generate_krx_slots()
-        .into_iter()
-        .map(|t| SlotState {
-            time: t,
-            scenario: RwSignal::new(false),
-            trade: RwSignal::new(false),
-        })
-        .collect();
+    let krx_slots: Vec<SlotState> = generate_krx_slots().into_iter().map(|t| SlotState {
+        time: t,
+        scenario: RwSignal::new(false),
+        trade: RwSignal::new(false),
+    }).collect();
 
-    let us_slots: Vec<SlotState> = generate_us_slots()
-        .into_iter()
-        .map(|t| SlotState {
-            time: t,
-            scenario: RwSignal::new(false),
-            trade: RwSignal::new(false),
-        })
-        .collect();
+    let us_slots: Vec<SlotState> = generate_us_slots().into_iter().map(|t| SlotState {
+        time: t,
+        scenario: RwSignal::new(false),
+        trade: RwSignal::new(false),
+    }).collect();
 
     view! {
         <div>

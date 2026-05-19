@@ -2,9 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use lumos_domain::model::scenario::{
-    EvidenceCard, EvidenceSourceType, ScenarioItem, ScenarioRun, ScenarioStatus,
-};
+use lumos_domain::model::scenario::{EvidenceCard, EvidenceSourceType, ScenarioItem, ScenarioRun, ScenarioStatus};
 
 #[async_trait]
 pub trait EvidenceCardRepository: Send + Sync {
@@ -29,11 +27,7 @@ pub struct CreateScenarioRunInput {
 pub trait ScenarioRunRepository: Send + Sync {
     async fn create(&self, input: CreateScenarioRunInput) -> Result<ScenarioRun>;
     async fn update_status(&self, id: Uuid, status: ScenarioStatus) -> Result<ScenarioRun>;
-    async fn find_latest_for_manager(
-        &self,
-        manager_id: Uuid,
-        limit: u32,
-    ) -> Result<Vec<ScenarioRun>>;
+    async fn find_latest_for_manager(&self, manager_id: Uuid, limit: u32) -> Result<Vec<ScenarioRun>>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<ScenarioRun>>;
 }
 

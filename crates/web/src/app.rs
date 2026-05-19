@@ -6,10 +6,17 @@ use leptos_router::{
 };
 
 use crate::pages::{
-    home::HomePage, manager::analysis::AnalysisTab, manager::detail::ManagerDetailPage,
-    manager::holdings::HoldingsTab, manager::scenarios::ScenariosTab,
-    manager::schedule::ScheduleTab, manager::settings::SettingsTab, manager::trades::TradesTab,
-    manager_new::ManagerNewPage, managers::ManagersPage, not_found::NotFoundPage,
+    home::HomePage,
+    manager::analysis::AnalysisTab,
+    manager::detail::ManagerDetailPage,
+    manager::holdings::HoldingsTab,
+    manager::scenarios::ScenariosTab,
+    manager::schedule::ScheduleTab,
+    manager::settings::SettingsTab,
+    manager::trades::TradesTab,
+    manager_new::ManagerNewPage,
+    managers::ManagersPage,
+    not_found::NotFoundPage,
     settings::SettingsPage,
 };
 

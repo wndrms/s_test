@@ -85,22 +85,13 @@ impl HoldingDto {
         self.avg_price.to_string()
     }
     pub fn current_price_str(&self) -> String {
-        self.current_price
-            .as_ref()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "—".to_string())
+        self.current_price.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "—".to_string())
     }
     pub fn market_value_str(&self) -> String {
-        self.market_value
-            .as_ref()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "—".to_string())
+        self.market_value.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "—".to_string())
     }
     pub fn unrealized_pnl_str(&self) -> String {
-        self.unrealized_pnl
-            .as_ref()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "—".to_string())
+        self.unrealized_pnl.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "—".to_string())
     }
     pub fn unrealized_pnl_pct_val(&self) -> f64 {
         self.unrealized_pnl_pct.unwrap_or(0.0)
@@ -122,15 +113,9 @@ pub struct TradeDto {
 }
 
 impl TradeDto {
-    pub fn quantity_str(&self) -> String {
-        self.quantity.to_string()
-    }
-    pub fn price_str(&self) -> String {
-        self.price.to_string()
-    }
-    pub fn amount_str(&self) -> String {
-        self.amount.to_string()
-    }
+    pub fn quantity_str(&self) -> String { self.quantity.to_string() }
+    pub fn price_str(&self) -> String { self.price.to_string() }
+    pub fn amount_str(&self) -> String { self.amount.to_string() }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

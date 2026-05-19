@@ -28,8 +28,8 @@ use lumos_infra::db::repo::scenario::{
 };
 use lumos_infra::db::repo::schedule::PgManagerScheduleRepository;
 use lumos_infra::db::repo::schedule_mgmt::PgManagerScheduleWriteRepository;
-use lumos_infra::db::repo::symbol::PgSymbolRepository;
 use lumos_infra::db::repo::trades::PgTradesRepository;
+use lumos_infra::db::repo::symbol::PgSymbolRepository;
 use lumos_infra::db::repo::user::PgSecretKeyRepository;
 use lumos_infra::providers::mock_notification::MockNotificationProvider;
 use lumos_infra::scenario::mock_llm::MockLlmProvider;
@@ -80,9 +80,10 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(PgBrokerOrderRepository::new(pool.clone()));
 
     let manager_service = Arc::new(
-        ManagerService::new(manager_repo, Arc::clone(&policy_repo)).with_broker_connection_repo(
-            Arc::clone(&broker_connection_repo) as Arc<dyn BrokerConnectionRepository>,
-        ),
+        ManagerService::new(manager_repo, Arc::clone(&policy_repo))
+            .with_broker_connection_repo(
+                Arc::clone(&broker_connection_repo) as Arc<dyn BrokerConnectionRepository>,
+            ),
     );
     let secret_service = Arc::new(SecretService::new(secret_repo, encryptor));
     let scenario_service = Arc::new(

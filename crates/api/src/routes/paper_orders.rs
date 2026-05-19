@@ -40,13 +40,7 @@ async fn create_paper_order(
 
     let svc = build_service(&state);
     let plan = svc
-        .create_paper_order(
-            req.manager_id,
-            req.symbol_id,
-            side,
-            req.quantity,
-            req.limit_price,
-        )
+        .create_paper_order(req.manager_id, req.symbol_id, side, req.quantity, req.limit_price)
         .await
         .map_err(ApiError::from)?;
 

@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 lumos-domain = { path = "../domain" }
 lumos-app = { path = "../app" }
-lumos-infra = { path = "../infra", default-features = false }
+lumos-infra = { path = "../infra" }
 
 anyhow.workspace = true
 async-trait.workspace = true
@@ -25,13 +25,3 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 sqlx.workspace = true
 dotenvy.workspace = true
-
-[features]
-default = ["offline-fixtures"]
-offline-fixtures = ["lumos-infra/offline-fixtures"]
-online-kis = ["lumos-infra/online-kis"]
-online-naver = ["lumos-infra/online-naver"]
-online-opendart = ["lumos-infra/online-opendart"]
-online-sec = ["lumos-infra/online-sec"]
-online-telegram = ["lumos-infra/online-telegram"]
-live-trading = ["lumos-infra/live-trading"]

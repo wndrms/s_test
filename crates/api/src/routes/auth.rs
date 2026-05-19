@@ -1,4 +1,4 @@
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -8,7 +8,8 @@ use crate::state::AppState;
 use lumos_app::error::AppError;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/token", post(issue_dev_token))
+    Router::new()
+        .route("/token", post(issue_dev_token))
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,7 +26,6 @@ pub struct TokenResponse {
 }
 
 async fn issue_dev_token(
-    State(state): State<AppState>,
     Json(req): Json<IssueTokenRequest>,
 ) -> ApiResult<Json<TokenResponse>> {
     // 프로덕션 환경에서는 이 엔드포인트를 제거하고 OAuth2/OIDC로 교체
@@ -36,33 +36,12 @@ async fn issue_dev_token(
     }
 
     let user_id = req.user_id.unwrap_or_else(Uuid::new_v4);
-    ensure_dev_user(&state, user_id).await?;
-
-    let secret =
-        std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev-secret-change-in-prod".to_string());
+    let secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "dev-secret-change-in-prod".to_string());
     let ttl_hours: i64 = 24;
 
     let token = issue_token(user_id, &secret, ttl_hours)
         .map_err(|e| ApiError::from(AppError::Internal(e)))?;
 
-    Ok(Json(TokenResponse {
-        token,
-        user_id,
-        expires_in_hours: ttl_hours,
-    }))
-}
-
-async fn ensure_dev_user(state: &AppState, user_id: Uuid) -> ApiResult<()> {
-    sqlx::query(
-        r#"INSERT INTO users (id, display_name)
-           VALUES ($1, $2)
-           ON CONFLICT (id) DO NOTHING"#,
-    )
-    .bind(user_id)
-    .bind("Development User")
-    .execute(&state.db)
-    .await
-    .map_err(|e| ApiError::from(AppError::Internal(e.into())))?;
-
-    Ok(())
+    Ok(Json(TokenResponse { token, user_id, expires_in_hours: ttl_hours }))
 }

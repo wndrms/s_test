@@ -5,8 +5,8 @@ pub mod holdings;
 pub mod managers;
 pub mod order_plans;
 pub mod paper_orders;
-pub mod scenarios;
 pub mod schedule_api;
+pub mod scenarios;
 pub mod trades;
 
 use axum::{middleware, routing::get, Router};
@@ -21,10 +21,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/managers/:manager_id/holdings", holdings::router())
         .nest("/managers/:manager_id/trades", trades::router())
         .nest("/managers/:manager_id/schedule", schedule_api::router())
-        .nest(
-            "/managers/:manager_id/analysis-reports",
-            analysis_reports::router(),
-        )
+        .nest("/managers/:manager_id/analysis-reports", analysis_reports::router())
         .nest("/managers/:manager_id/order-plans", order_plans::router())
         .nest("/paper/orders", paper_orders::router())
         .layer(middleware::from_fn(jwt_middleware));

@@ -16,10 +16,7 @@ pub struct DartClient {
 
 impl DartClient {
     pub fn new(api_key: String) -> Self {
-        Self {
-            api_key,
-            http: Client::new(),
-        }
+        Self { api_key, http: Client::new() }
     }
 }
 
@@ -60,7 +57,10 @@ impl DisclosureProvider for DartClient {
 impl DartClient {
     #[allow(dead_code)]
     async fn fetch_filings(&self, symbol: &Symbol) -> Result<Vec<DisclosureItem>> {
-        let corp_code = symbol.name_ko.as_deref().unwrap_or(&symbol.code);
+        let corp_code = symbol
+            .name_ko
+            .as_deref()
+            .unwrap_or(&symbol.code);
 
         let url = format!("{}/list.json", DART_API_BASE);
         let resp = self
@@ -85,26 +85,21 @@ impl DartClient {
             bail!("DART API error: {} {}", resp.status, resp.message);
         }
 
-        Ok(resp
-            .list
-            .unwrap_or_default()
-            .into_iter()
-            .map(|item| {
-                let filed_at = parse_dart_date(&item.rcept_dt);
-                let doc_type = classify_dart_doc(&item.report_nm);
-                let url = Some(format!(
-                    "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}",
-                    item.rcept_no
-                ));
-                DisclosureItem {
-                    title: item.report_nm,
-                    corp_name: item.corp_name,
-                    filed_at,
-                    doc_type,
-                    url,
-                }
-            })
-            .collect())
+        Ok(resp.list.unwrap_or_default().into_iter().map(|item| {
+            let filed_at = parse_dart_date(&item.rcept_dt);
+            let doc_type = classify_dart_doc(&item.report_nm);
+            let url = Some(format!(
+                "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}",
+                item.rcept_no
+            ));
+            DisclosureItem {
+                title: item.report_nm,
+                corp_name: item.corp_name,
+                filed_at,
+                doc_type,
+                url,
+            }
+        }).collect())
     }
 }
 
@@ -139,20 +134,14 @@ fn mock_dart_filings(symbol: &Symbol) -> Vec<DisclosureItem> {
     vec![
         DisclosureItem {
             title: format!("[MOCK] {} 분기보고서 (2024.3)", symbol.code),
-            corp_name: symbol
-                .name_ko
-                .clone()
-                .unwrap_or_else(|| symbol.code.clone()),
+            corp_name: symbol.name_ko.clone().unwrap_or_else(|| symbol.code.clone()),
             filed_at: Utc::now(),
             doc_type: "분기보고서".to_string(),
             url: Some("https://dart.fss.or.kr".to_string()),
         },
         DisclosureItem {
             title: format!("[MOCK] {} 주요사항보고서", symbol.code),
-            corp_name: symbol
-                .name_ko
-                .clone()
-                .unwrap_or_else(|| symbol.code.clone()),
+            corp_name: symbol.name_ko.clone().unwrap_or_else(|| symbol.code.clone()),
             filed_at: Utc::now(),
             doc_type: "주요사항보고서".to_string(),
             url: None,

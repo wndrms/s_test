@@ -16,11 +16,7 @@ pub struct NaverNewsClient {
 
 impl NaverNewsClient {
     pub fn new(client_id: String, client_secret: String) -> Self {
-        Self {
-            client_id,
-            client_secret,
-            http: Client::new(),
-        }
+        Self { client_id, client_secret, http: Client::new() }
     }
 }
 
@@ -77,25 +73,21 @@ impl NaverNewsClient {
             .await
             .context("Naver News API parse failed")?;
 
-        Ok(resp
-            .items
-            .into_iter()
-            .map(|item| {
-                let published_at = parse_rfc2822(&item.pub_date);
-                let snippet = if item.description.is_empty() {
-                    None
-                } else {
-                    Some(strip_html_tags(&item.description))
-                };
-                NewsItem {
-                    title: strip_html_tags(&item.title),
-                    url: item.original_link,
-                    publisher: extract_publisher(&item.link),
-                    published_at,
-                    snippet,
-                }
-            })
-            .collect())
+        Ok(resp.items.into_iter().map(|item| {
+            let published_at = parse_rfc2822(&item.pub_date);
+            let snippet = if item.description.is_empty() {
+                None
+            } else {
+                Some(strip_html_tags(&item.description))
+            };
+            NewsItem {
+                title: strip_html_tags(&item.title),
+                url: item.original_link,
+                publisher: extract_publisher(&item.link),
+                published_at,
+                snippet,
+            }
+        }).collect())
     }
 }
 

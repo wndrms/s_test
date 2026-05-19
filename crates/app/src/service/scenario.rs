@@ -164,8 +164,7 @@ impl ScenarioService {
                     scenario_run_id: run.id,
                     base_price: base_price_dec,
                     analyzed_at: output.analyzed_at,
-                    report_text: output
-                        .analysis_detail
+                    report_text: output.analysis_detail
                         .clone()
                         .unwrap_or_else(|| output.analysis_summary.clone()),
                     report_summary: Some(output.analysis_summary.clone()),
@@ -317,10 +316,7 @@ impl ScenarioService {
         } else {
             (
                 critic.revised_scenarios.clone().unwrap_or(draft.scenarios),
-                critic
-                    .revised_action
-                    .clone()
-                    .unwrap_or(draft.recommended_action),
+                critic.revised_action.clone().unwrap_or(draft.recommended_action),
             )
         };
 
@@ -363,11 +359,7 @@ impl ScenarioService {
             "{} | 감성:{} | Critic:{} | 게이팅:{}",
             fundamental.health_summary,
             news.sentiment,
-            if critic.accepted {
-                "통과"
-            } else {
-                "수정됨"
-            },
+            if critic.accepted { "통과" } else { "수정됨" },
             if gate_triggered { "발동" } else { "없음" }
         );
 

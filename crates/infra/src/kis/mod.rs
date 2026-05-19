@@ -5,8 +5,8 @@ pub mod paper_broker;
 pub use client::{KisClient, KisEnvironment};
 pub use paper_broker::PaperBroker;
 
-use lumos_domain::port::broker::Broker;
 use std::sync::Arc;
+use lumos_domain::port::broker::Broker;
 
 /// `.env` / 환경변수에서 KisClient 또는 PaperBroker를 생성합니다.
 ///
@@ -20,7 +20,9 @@ pub fn broker_from_env() -> Arc<dyn Broker> {
     let account_product = std::env::var("KIS_ACCOUNT_PRODUCT").unwrap_or_else(|_| "01".to_string());
 
     if app_key.is_empty() || app_secret.is_empty() || account_no.is_empty() {
-        tracing::warn!("KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO not set — using PaperBroker");
+        tracing::warn!(
+            "KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO not set — using PaperBroker"
+        );
         let quotes = std::collections::HashMap::new();
         return Arc::new(PaperBroker::with_static_quotes(
             uuid::Uuid::nil(),

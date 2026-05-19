@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use lumos_domain::model::scenario::{
-    EvidenceCard, EvidenceSourceType, RecommendedAction, ScenarioAction, ScenarioItem, ScenarioType,
+    EvidenceCard, EvidenceSourceType, RecommendedAction, ScenarioAction, ScenarioItem,
+    ScenarioType,
 };
 use lumos_domain::port::llm::{
     CriticReview, FundamentalAnalysis, LlmProvider, NewsEventAnalysis, ScenarioOutput,
@@ -87,19 +88,11 @@ impl OpenAiLlmProvider {
             .json(&ChatRequest {
                 model: self.model.clone(),
                 messages: vec![
-                    ChatMessage {
-                        role: "system".to_string(),
-                        content: system.to_string(),
-                    },
-                    ChatMessage {
-                        role: "user".to_string(),
-                        content: user.to_string(),
-                    },
+                    ChatMessage { role: "system".to_string(), content: system.to_string() },
+                    ChatMessage { role: "user".to_string(), content: user.to_string() },
                 ],
                 temperature: 0.3,
-                response_format: ResponseFormat {
-                    format_type: "json_object".to_string(),
-                },
+                response_format: ResponseFormat { format_type: "json_object".to_string() },
             })
             .send()
             .await
@@ -145,10 +138,7 @@ impl OpenAiLlmProvider {
         cards: &'a [EvidenceCard],
         types: &[EvidenceSourceType],
     ) -> Vec<&'a EvidenceCard> {
-        cards
-            .iter()
-            .filter(|c| types.contains(&c.source_type))
-            .collect()
+        cards.iter().filter(|c| types.contains(&c.source_type)).collect()
     }
 }
 
@@ -179,10 +169,7 @@ impl LlmProvider for OpenAiLlmProvider {
     ) -> Result<FundamentalAnalysis> {
         let fund_cards = Self::filter_by_type(
             cards,
-            &[
-                EvidenceSourceType::Financial,
-                EvidenceSourceType::Disclosure,
-            ],
+            &[EvidenceSourceType::Financial, EvidenceSourceType::Disclosure],
         );
         let evidence_ids: Vec<_> = fund_cards.iter().map(|c| c.id).collect();
 
@@ -204,28 +191,18 @@ impl LlmProvider for OpenAiLlmProvider {
         );
 
         let raw = self.chat(system, &user).await?;
-        let v: serde_json::Value =
-            serde_json::from_str(&raw).context("fundamental analysis parse failed")?;
+        let v: serde_json::Value = serde_json::from_str(&raw)
+            .context("fundamental analysis parse failed")?;
 
         Ok(FundamentalAnalysis {
             health_summary: v["health_summary"].as_str().unwrap_or("").to_string(),
             key_observations: v["key_observations"]
                 .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str())
-                        .map(|s| s.to_string())
-                        .collect()
-                })
+                .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_string()).collect())
                 .unwrap_or_default(),
             risks: v["risks"]
                 .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str())
-                        .map(|s| s.to_string())
-                        .collect()
-                })
+                .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_string()).collect())
                 .unwrap_or_default(),
             evidence_ids,
         })
@@ -258,31 +235,21 @@ impl LlmProvider for OpenAiLlmProvider {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let user = format!(
-            "종목: {}\n\n뉴스/커뮤니티 데이터:\n{}",
-            symbol_code, evidence_text
-        );
+        let user = format!("종목: {}\n\n뉴스/커뮤니티 데이터:\n{}", symbol_code, evidence_text);
 
         let raw = self.chat(system, &user).await?;
-        let v: serde_json::Value =
-            serde_json::from_str(&raw).context("news analysis parse failed")?;
+        let v: serde_json::Value = serde_json::from_str(&raw)
+            .context("news analysis parse failed")?;
 
         let high_risk_keywords: Vec<String> = v["high_risk_keywords"]
             .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(|s| s.to_string())
-                    .collect()
-            })
+            .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_string()).collect())
             .unwrap_or_default();
 
         Ok(NewsEventAnalysis {
             catalyst_summary: v["catalyst_summary"].as_str().unwrap_or("").to_string(),
             sentiment: v["sentiment"].as_str().unwrap_or("neutral").to_string(),
-            high_risk_detected: v["high_risk_detected"]
-                .as_bool()
-                .unwrap_or(!high_risk_keywords.is_empty()),
+            high_risk_detected: v["high_risk_detected"].as_bool().unwrap_or(!high_risk_keywords.is_empty()),
             high_risk_keywords,
             evidence_ids,
         })
@@ -321,8 +288,8 @@ impl LlmProvider for OpenAiLlmProvider {
         );
 
         let raw = self.chat(system, &user).await?;
-        let v: serde_json::Value =
-            serde_json::from_str(&raw).context("strategy draft parse failed")?;
+        let v: serde_json::Value = serde_json::from_str(&raw)
+            .context("strategy draft parse failed")?;
 
         let scenarios = parse_scenario_items(&v["scenarios"], input)?;
         let recommended_action = parse_recommended_action(&v["recommended_action"])?;
@@ -331,11 +298,7 @@ impl LlmProvider for OpenAiLlmProvider {
             .unwrap_or("전략 근거 없음")
             .to_string();
 
-        Ok(StrategyDraft {
-            scenarios,
-            recommended_action,
-            strategy_rationale,
-        })
+        Ok(StrategyDraft { scenarios, recommended_action, strategy_rationale })
     }
 
     // ── Step 4: Critic 검토 ───────────────────────────────────────────────────
@@ -386,19 +349,14 @@ impl LlmProvider for OpenAiLlmProvider {
         );
 
         let raw = self.chat(system, &user).await?;
-        let v: serde_json::Value =
-            serde_json::from_str(&raw).context("critic review parse failed")?;
+        let v: serde_json::Value = serde_json::from_str(&raw)
+            .context("critic review parse failed")?;
 
         let accepted = v["accepted"].as_bool().unwrap_or(true);
         let critique = v["critique"].as_str().unwrap_or("").to_string();
         let issues: Vec<String> = v["issues"]
             .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str())
-                    .map(|s| s.to_string())
-                    .collect()
-            })
+            .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_string()).collect())
             .unwrap_or_default();
 
         let revised_scenarios = if !accepted && !v["revised_scenarios"].is_null() {
@@ -412,20 +370,15 @@ impl LlmProvider for OpenAiLlmProvider {
             None
         };
 
-        Ok(CriticReview {
-            accepted,
-            revised_scenarios,
-            revised_action,
-            critique,
-            issues,
-        })
+        Ok(CriticReview { accepted, revised_scenarios, revised_action, critique, issues })
     }
 }
 
 // ── 파싱 헬퍼 ────────────────────────────────────────────────────────────────
 
 fn parse_scenario_output(raw: &str, input: &ScenarioPromptInput) -> Result<ScenarioOutput> {
-    let v: serde_json::Value = serde_json::from_str(raw).context("scenario output parse failed")?;
+    let v: serde_json::Value = serde_json::from_str(raw)
+        .context("scenario output parse failed")?;
 
     let scenarios = parse_scenario_items(&v["scenarios"], input)?;
     let recommended_action = parse_recommended_action(&v["recommended_action"])?;
@@ -451,9 +404,7 @@ fn parse_scenario_items(
     v: &serde_json::Value,
     input: &ScenarioPromptInput,
 ) -> Result<Vec<ScenarioItem>> {
-    let arr = v
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("scenarios is not an array"))?;
+    let arr = v.as_array().ok_or_else(|| anyhow::anyhow!("scenarios is not an array"))?;
     if arr.is_empty() {
         bail!("empty scenarios array");
     }
@@ -498,8 +449,14 @@ fn parse_scenario_items(
                 probability_pct,
                 target_price,
                 stop_loss_price,
-                condition_text: s["condition_text"].as_str().unwrap_or("").to_string(),
-                strategy_text: s["strategy_text"].as_str().unwrap_or("").to_string(),
+                condition_text: s["condition_text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
+                strategy_text: s["strategy_text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
                 risk_text: s["risk_text"].as_str().map(|s| s.to_string()),
                 rank_order: (i + 1) as i32,
             }
