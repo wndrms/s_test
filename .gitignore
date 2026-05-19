@@ -9,6 +9,9 @@ vendor
 *.tar.gz
 Cargo.lock.bak
 
+# Leptos / trunk 빌드 결과물
+crates/web/dist/
+
 # macOS
 .DS_Store
 **/.DS_Store
