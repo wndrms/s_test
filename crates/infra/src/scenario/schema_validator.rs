@@ -3,9 +3,7 @@ use serde_json::Value;
 
 /// LLM이 반환한 JSON을 scenario_output.schema.json 계약에 따라 검증
 pub fn validate_scenario_output(json: &Value) -> Result<()> {
-    let obj = json
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("root must be an object"))?;
+    let obj = json.as_object().ok_or_else(|| anyhow::anyhow!("root must be an object"))?;
 
     require_string(obj, "symbol", 1, None)?;
     require_string_pattern(obj, "base_price", r"^\d+(\.\d+)?$")?;
@@ -14,9 +12,7 @@ pub fn validate_scenario_output(json: &Value) -> Result<()> {
 
     if let Some(detail) = obj.get("analysis_detail") {
         if !detail.is_null() {
-            let s = detail
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("analysis_detail must be string or null"))?;
+            let s = detail.as_str().ok_or_else(|| anyhow::anyhow!("analysis_detail must be string or null"))?;
             if s.len() > 12000 {
                 bail!("analysis_detail exceeds 12000 chars");
             }
@@ -66,28 +62,21 @@ fn validate_scenarios(root: &serde_json::Map<String, Value>) -> Result<()> {
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let obj = item
-                .as_object()
-                .ok_or_else(|| anyhow::anyhow!("scenario[{i}] must be an object"))?;
+            let obj = item.as_object().ok_or_else(|| anyhow::anyhow!("scenario[{i}] must be an object"))?;
 
-            let stype = obj
-                .get("type")
-                .and_then(|v| v.as_str())
+            let stype = obj.get("type").and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("scenario[{i}] missing type"))?;
             if !matches!(stype, "bullish" | "sideways" | "bearish") {
                 bail!("scenario[{i}].type must be bullish|sideways|bearish, got: {stype}");
             }
 
-            let action = obj
-                .get("action")
-                .and_then(|v| v.as_str())
+            let action = obj.get("action").and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("scenario[{i}] missing action"))?;
             if !matches!(action, "buy" | "sell" | "hold" | "watch") {
                 bail!("scenario[{i}].action must be buy|sell|hold|watch, got: {action}");
             }
 
-            let prob = obj
-                .get("probability_pct")
+            let prob = obj.get("probability_pct")
                 .and_then(|v| v.as_f64())
                 .ok_or_else(|| anyhow::anyhow!("scenario[{i}] missing probability_pct"))?;
             if !(0.0..=100.0).contains(&prob) {
@@ -98,8 +87,7 @@ fn validate_scenarios(root: &serde_json::Map<String, Value>) -> Result<()> {
             require_string(obj, "strategy", 1, Some(1200))?;
             require_string(obj, "reason", 1, Some(1600))?;
 
-            let refs = obj
-                .get("evidence_refs")
+            let refs = obj.get("evidence_refs")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| anyhow::anyhow!("scenario[{i}] missing evidence_refs"))?;
             if refs.is_empty() || refs.len() > 12 {
@@ -126,9 +114,7 @@ fn validate_recommended_action(root: &serde_json::Map<String, Value>) -> Result<
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("recommended_action must be an object"))?;
 
-    let action = ra
-        .get("action")
-        .and_then(|v| v.as_str())
+    let action = ra.get("action").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("recommended_action missing action"))?;
     if !matches!(action, "buy" | "sell" | "hold" | "watch") {
         bail!("recommended_action.action invalid: {action}");
@@ -136,8 +122,7 @@ fn validate_recommended_action(root: &serde_json::Map<String, Value>) -> Result<
 
     require_string(ra, "reason", 1, Some(1200))?;
 
-    let conf = ra
-        .get("confidence_pct")
+    let conf = ra.get("confidence_pct")
         .and_then(|v| v.as_f64())
         .ok_or_else(|| anyhow::anyhow!("recommended_action missing confidence_pct"))?;
     if !(0.0..=100.0).contains(&conf) {
@@ -154,21 +139,15 @@ fn validate_recommended_action(root: &serde_json::Map<String, Value>) -> Result<
 }
 
 fn validate_order_intent(v: &Value) -> Result<()> {
-    let obj = v
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("order_intent must be an object"))?;
+    let obj = v.as_object().ok_or_else(|| anyhow::anyhow!("order_intent must be an object"))?;
 
-    let side = obj
-        .get("side")
-        .and_then(|v| v.as_str())
+    let side = obj.get("side").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("order_intent missing side"))?;
     if !matches!(side, "buy" | "sell") {
         bail!("order_intent.side must be buy|sell, got: {side}");
     }
 
-    let order_type = obj
-        .get("order_type")
-        .and_then(|v| v.as_str())
+    let order_type = obj.get("order_type").and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("order_intent missing order_type"))?;
     if order_type != "limit" {
         bail!("order_intent.order_type must be limit, got: {order_type}");
@@ -219,9 +198,7 @@ fn require_string_pattern(
 }
 
 fn regex_lite(pattern: &str) -> SimpleRegex {
-    SimpleRegex {
-        pattern: pattern.to_string(),
-    }
+    SimpleRegex { pattern: pattern.to_string() }
 }
 
 struct SimpleRegex {
@@ -237,9 +214,7 @@ impl SimpleRegex {
                 }
                 let parts: Vec<&str> = s.splitn(2, '.').collect();
                 parts[0].chars().all(|c| c.is_ascii_digit())
-                    && parts.get(1).map_or(true, |frac| {
-                        !frac.is_empty() && frac.chars().all(|c| c.is_ascii_digit())
-                    })
+                    && parts.get(1).map_or(true, |frac| !frac.is_empty() && frac.chars().all(|c| c.is_ascii_digit()))
             }
             _ => true,
         }

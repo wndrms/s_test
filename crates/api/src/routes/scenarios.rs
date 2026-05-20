@@ -118,9 +118,7 @@ async fn list_runs(
         .latest_runs(manager_id, 20)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(
-        runs.into_iter().map(ScenarioRunResponse::from).collect(),
-    ))
+    Ok(Json(runs.into_iter().map(ScenarioRunResponse::from).collect()))
 }
 
 #[derive(Debug, Serialize)]
@@ -195,7 +193,8 @@ async fn list_items(
         .find_by_ids(&symbol_ids)
         .await
         .map_err(|e| ApiError::from(AppError::Internal(e)))?;
-    let symbol_map: HashMap<Uuid, String> = symbols.into_iter().map(|s| (s.id, s.code)).collect();
+    let symbol_map: HashMap<Uuid, String> =
+        symbols.into_iter().map(|s| (s.id, s.code)).collect();
 
     Ok(Json(
         items

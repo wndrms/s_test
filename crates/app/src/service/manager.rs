@@ -26,10 +26,7 @@ impl ManagerService {
         }
     }
 
-    pub fn with_broker_connection_repo(
-        mut self,
-        repo: Arc<dyn BrokerConnectionRepository>,
-    ) -> Self {
+    pub fn with_broker_connection_repo(mut self, repo: Arc<dyn BrokerConnectionRepository>) -> Self {
         self.broker_connections = Some(repo);
         self
     }
@@ -93,7 +90,9 @@ impl ManagerService {
     pub async fn set_auto_trade(&self, manager_id: Uuid, enabled: bool) -> AppResult<Manager> {
         let manager = self.get(manager_id).await?;
         if !manager.is_active() {
-            return Err(AppError::Forbidden("manager is not active".to_string()));
+            return Err(AppError::Forbidden(
+                "manager is not active".to_string(),
+            ));
         }
         self.managers
             .set_auto_trade(manager_id, enabled)

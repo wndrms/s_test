@@ -22,9 +22,7 @@ impl AesGcmEncryptor {
     }
 
     pub fn from_base64(b64_key: &str) -> Result<Self> {
-        let bytes = B64
-            .decode(b64_key)
-            .context("invalid base64 encryption key")?;
+        let bytes = B64.decode(b64_key).context("invalid base64 encryption key")?;
         let arr: [u8; 32] = bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("encryption key must be 32 bytes"))?;

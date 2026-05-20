@@ -26,12 +26,13 @@ impl ManagerScheduleWriteRepository for PgManagerScheduleWriteRepository {
     ) -> Result<Uuid> {
         // manager_schedules에 UNIQUE(manager_id) 제약이 없을 수 있으므로
         // SELECT 후 없으면 INSERT, 있으면 UPDATE 방식으로 구현
-        let existing: Option<(Uuid,)> = sqlx::query_as::<_, (Uuid,)>(
-            "SELECT id FROM manager_schedules WHERE manager_id = $1 LIMIT 1",
-        )
-        .bind(manager_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let existing: Option<(Uuid,)> =
+            sqlx::query_as::<_, (Uuid,)>(
+                "SELECT id FROM manager_schedules WHERE manager_id = $1 LIMIT 1",
+            )
+            .bind(manager_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         match existing {
             Some((id,)) => {
@@ -87,7 +88,11 @@ impl ManagerScheduleWriteRepository for PgManagerScheduleWriteRepository {
         Ok(())
     }
 
-    async fn disable_slots_not_in(&self, schedule_id: Uuid, times: &[NaiveTime]) -> Result<()> {
+    async fn disable_slots_not_in(
+        &self,
+        schedule_id: Uuid,
+        times: &[NaiveTime],
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE schedule_slots SET enabled = false WHERE schedule_id = $1 AND time_of_day != ALL($2)",
         )

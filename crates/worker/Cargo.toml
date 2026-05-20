@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 lumos-domain = { path = "../domain" }
 lumos-app = { path = "../app" }
-lumos-infra = { path = "../infra", default-features = false }
+lumos-infra = { path = "../infra" }
 
 anyhow.workspace = true
 async-trait.workspace = true

@@ -83,10 +83,7 @@ async fn list_order_plans(
     Path(manager_id): Path<Uuid>,
 ) -> ApiResult<Json<Vec<OrderPlanResponse>>> {
     let svc = build_service(&state);
-    let plans = svc
-        .list_for_manager(manager_id, 20)
-        .await
-        .map_err(ApiError::from)?;
+    let plans = svc.list_for_manager(manager_id, 20).await.map_err(ApiError::from)?;
     Ok(Json(plans.into_iter().map(Into::into).collect()))
 }
 
@@ -103,9 +100,7 @@ async fn execute_order_plan(
         .ok_or_else(|| ApiError::from(AppError::NotFound("order_plan".to_string())))?;
 
     if plan.manager_id != manager_id {
-        return Err(ApiError::from(AppError::Forbidden(
-            "manager mismatch".to_string(),
-        )));
+        return Err(ApiError::from(AppError::Forbidden("manager mismatch".to_string())));
     }
 
     // 2. 매니저 조회 → broker_connection_id 취득
@@ -149,9 +144,7 @@ async fn execute_order_plan(
 
 /// broker_connection의 환경에 맞는 Broker 인스턴스를 생성한다.
 /// MVP: app_key/secret은 환경변수에서 읽는다. 이후 secret_service 연동 예정.
-fn build_broker_for_connection(
-    conn: &lumos_domain::model::broker::BrokerConnection,
-) -> Arc<dyn Broker> {
+fn build_broker_for_connection(conn: &lumos_domain::model::broker::BrokerConnection) -> Arc<dyn Broker> {
     let app_key = std::env::var("KIS_APP_KEY").unwrap_or_default();
     let app_secret = std::env::var("KIS_APP_SECRET").unwrap_or_default();
     let account_no = std::env::var("KIS_ACCOUNT_NO").unwrap_or_default();
@@ -174,13 +167,7 @@ fn build_broker_for_connection(
         BrokerEnvironment::Real => KisEnvironment::Real,
         BrokerEnvironment::Paper => KisEnvironment::Paper,
     };
-    Arc::new(KisClient::new(
-        env,
-        app_key,
-        app_secret,
-        account_no,
-        account_product,
-    ))
+    Arc::new(KisClient::new(env, app_key, app_secret, account_no, account_product))
 }
 
 pub fn build_service(state: &AppState) -> OrderPlanService {

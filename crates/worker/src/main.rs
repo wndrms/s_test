@@ -46,11 +46,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("migration failed")?;
 
-    let _encryptor =
-        Arc::new(AesGcmEncryptor::from_base64(&encryption_key).context("invalid ENCRYPTION_KEY")?);
+    let _encryptor = Arc::new(
+        AesGcmEncryptor::from_base64(&encryption_key).context("invalid ENCRYPTION_KEY")?,
+    );
 
     // KIS 클라이언트 (환경변수가 있으면 생성, 없으면 None)
-    let kis_client = build_kis_client_from_env().await?;
+    let kis_client = build_kis_client_from_env();
 
     let symbol_repo: Arc<dyn lumos_app::repo::symbol::SymbolRepository> =
         Arc::new(PgSymbolRepository::new(pool.clone()));
@@ -140,17 +141,15 @@ fn init_tracing() {
 }
 
 /// KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO 가 모두 설정된 경우에만 KisClient를 반환합니다.
-async fn build_kis_client_from_env() -> anyhow::Result<Option<KisClient>> {
+fn build_kis_client_from_env() -> Option<KisClient> {
     let app_key = std::env::var("KIS_APP_KEY").unwrap_or_default();
     let app_secret = std::env::var("KIS_APP_SECRET").unwrap_or_default();
     let account_no = std::env::var("KIS_ACCOUNT_NO").unwrap_or_default();
     let account_product = std::env::var("KIS_ACCOUNT_PRODUCT").unwrap_or_else(|_| "01".to_string());
 
     if app_key.is_empty() || app_secret.is_empty() || account_no.is_empty() {
-        tracing::warn!(
-            "KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO not set — KIS features disabled"
-        );
-        return Ok(None);
+        tracing::warn!("KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO not set — KIS features disabled");
+        return None;
     }
 
     let env = match std::env::var("KIS_ENV").as_deref() {
@@ -164,13 +163,5 @@ async fn build_kis_client_from_env() -> anyhow::Result<Option<KisClient>> {
         }
     };
 
-    let client = KisClient::new(env, app_key, app_secret, account_no, account_product);
-
-    #[cfg(feature = "online-kis")]
-    {
-        client.issue_access_token().await?;
-        tracing::info!("KIS access token initialized");
-    }
-
-    Ok(Some(client))
+    Some(KisClient::new(env, app_key, app_secret, account_no, account_product))
 }

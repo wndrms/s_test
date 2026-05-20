@@ -27,10 +27,7 @@ impl IntoResponse for ApiError {
             AppError::BrokerError(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             AppError::Internal(e) => {
                 tracing::error!("internal error: {e:?}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal server error".to_string(),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".to_string())
             }
         };
 

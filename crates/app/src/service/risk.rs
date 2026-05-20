@@ -115,10 +115,7 @@ pub fn evaluate(policy: &RiskPolicy, ctx: &OrderContext) -> RiskCheckResult {
     check!(
         "estimated_amount_positive",
         ctx.estimated_amount_krw > Decimal::ZERO,
-        Some(format!(
-            "예상 금액이 0 이하입니다: {}",
-            ctx.estimated_amount_krw
-        ))
+        Some(format!("예상 금액이 0 이하입니다: {}", ctx.estimated_amount_krw))
     );
 
     // 4. 시장가 주문 허용 여부
@@ -260,10 +257,7 @@ pub fn evaluate(policy: &RiskPolicy, ctx: &OrderContext) -> RiskCheckResult {
     check!(
         "quantity_scale",
         scale <= 4,
-        Some(format!(
-            "주문 수량 소수점 자리 초과: {} (최대 4자리)",
-            scale
-        ))
+        Some(format!("주문 수량 소수점 자리 초과: {} (최대 4자리)", scale))
     );
 
     // 19. 매니저 ID 일관성 (정책 매니저와 일치)
@@ -350,11 +344,7 @@ mod tests {
         ctx.quote_as_of = ctx.now - Duration::seconds(120);
         let result = evaluate(&policy(id), &ctx);
         assert!(!result.passed);
-        assert!(result
-            .reject_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("가격 데이터"));
+        assert!(result.reject_reason.as_deref().unwrap_or("").contains("가격 데이터"));
     }
 
     #[test]
@@ -364,11 +354,7 @@ mod tests {
         ctx.ai_confidence_pct = dec!(20);
         let result = evaluate(&policy(id), &ctx);
         assert!(!result.passed);
-        assert!(result
-            .reject_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("AI 신뢰도"));
+        assert!(result.reject_reason.as_deref().unwrap_or("").contains("AI 신뢰도"));
     }
 
     #[test]
@@ -388,11 +374,7 @@ mod tests {
         ctx.today_realized_pnl_pct = dec!(-3.0);
         let result = evaluate(&policy(id), &ctx);
         assert!(!result.passed);
-        assert!(result
-            .reject_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("일 손실"));
+        assert!(result.reject_reason.as_deref().unwrap_or("").contains("일 손실"));
     }
 
     #[test]
@@ -402,11 +384,7 @@ mod tests {
         ctx.today_trade_count = 20;
         let result = evaluate(&policy(id), &ctx);
         assert!(!result.passed);
-        assert!(result
-            .reject_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("거래 횟수"));
+        assert!(result.reject_reason.as_deref().unwrap_or("").contains("거래 횟수"));
     }
 
     #[test]
@@ -427,11 +405,7 @@ mod tests {
         ctx.is_market_order = true;
         let result = evaluate(&policy(id), &ctx);
         assert!(!result.passed);
-        assert!(result
-            .reject_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("시장가"));
+        assert!(result.reject_reason.as_deref().unwrap_or("").contains("시장가"));
     }
 
     #[test]

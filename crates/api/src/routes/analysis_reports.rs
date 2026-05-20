@@ -101,9 +101,7 @@ impl AnalysisReportResponse {
             analyzed_at: r.analyzed_at,
             report_text: r.report_text,
             report_summary: r.report_summary,
-            data_freshness_level: r
-                .data_freshness_level
-                .map(|l| format!("{:?}", l).to_lowercase()),
+            data_freshness_level: r.data_freshness_level.map(|l| format!("{:?}", l).to_lowercase()),
             evidence: evidence.into_iter().map(Into::into).collect(),
             annotations: annotations.into_iter().map(Into::into).collect(),
         }
@@ -122,9 +120,7 @@ async fn get_report(
         .ok_or_else(|| ApiError::from(AppError::NotFound("analysis_report".to_string())))?;
 
     if report.manager_id != manager_id {
-        return Err(ApiError::from(AppError::NotFound(
-            "analysis_report".to_string(),
-        )));
+        return Err(ApiError::from(AppError::NotFound("analysis_report".to_string())));
     }
 
     let (evidence, annotations) = tokio::join!(

@@ -59,7 +59,13 @@ impl NaverFinanceClient {
             "https://m.stock.naver.com/api/stock/{}/integration",
             symbol_code
         );
-        let resp: NaverIntegrationResponse = self.http.get(&url).send().await?.json().await?;
+        let resp: NaverIntegrationResponse = self
+            .http
+            .get(&url)
+            .send()
+            .await?
+            .json()
+            .await?;
 
         let foreign_hold_rate = resp
             .stockInfo

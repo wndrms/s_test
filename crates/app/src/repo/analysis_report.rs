@@ -57,8 +57,7 @@ pub struct ChartAnnotation {
 pub trait AnalysisReportRepository: Send + Sync {
     async fn create(&self, input: CreateAnalysisReportInput) -> Result<AnalysisReport>;
     async fn link_evidence(&self, report_id: Uuid, evidence_ids: &[Uuid]) -> Result<()>;
-    async fn create_annotation(&self, input: CreateChartAnnotationInput)
-        -> Result<ChartAnnotation>;
+    async fn create_annotation(&self, input: CreateChartAnnotationInput) -> Result<ChartAnnotation>;
     async fn update_scenario_item_report(&self, item_id: Uuid, report_id: Uuid) -> Result<()>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<AnalysisReport>>;
     async fn find_evidence(&self, report_id: Uuid) -> Result<Vec<EvidenceCard>>;

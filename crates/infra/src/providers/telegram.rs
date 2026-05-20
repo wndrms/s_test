@@ -15,11 +15,7 @@ pub struct TelegramClient {
 
 impl TelegramClient {
     pub fn new(bot_token: String, chat_id: String) -> Self {
-        Self {
-            bot_token,
-            chat_id,
-            http: Client::new(),
-        }
+        Self { bot_token, chat_id, http: Client::new() }
     }
 }
 

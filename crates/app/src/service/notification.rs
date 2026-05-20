@@ -27,13 +27,7 @@ impl NotificationService {
         }
     }
 
-    pub async fn notify_trade_filled(
-        &self,
-        manager_id: Uuid,
-        symbol_id: Uuid,
-        side: &str,
-        amount: &str,
-    ) {
+    pub async fn notify_trade_filled(&self, manager_id: Uuid, symbol_id: Uuid, side: &str, amount: &str) {
         let body = format!("매니저 {manager_id}\n{side} {symbol_id} — {amount}");
         let n = Notification::info("주문 체결", body);
         if let Err(e) = self.provider.send(n).await {

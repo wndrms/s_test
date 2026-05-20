@@ -41,16 +41,6 @@ impl SecretService {
             .map_err(AppError::Internal)
     }
 
-    pub fn encrypt_payload(&self, plaintext: &[u8]) -> AppResult<Vec<u8>> {
-        self.encryptor
-            .encrypt(plaintext)
-            .map_err(AppError::Internal)
-    }
-
-    pub fn mask(&self, raw: &str) -> String {
-        self.encryptor.mask(raw)
-    }
-
     pub async fn decrypt_raw(&self, id: Uuid) -> AppResult<Vec<u8>> {
         let raw = self
             .repo

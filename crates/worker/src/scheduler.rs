@@ -7,9 +7,9 @@ use tokio::time::{interval, Duration};
 use uuid::Uuid;
 
 use lumos_app::repo::manager::ManagerRepository;
-use lumos_app::repo::manager::RiskPolicyRepository;
 use lumos_app::repo::order_plan::OrderPlanRepository;
 use lumos_app::repo::scenario::ScenarioItemRepository;
+use lumos_app::repo::manager::RiskPolicyRepository;
 use lumos_app::repo::schedule::{ManagerScheduleRepository, ScheduleRunRepository};
 use lumos_app::repo::symbol::SymbolRepository;
 use lumos_app::service::order_plan::OrderPlanService;
@@ -110,20 +110,27 @@ impl Scheduler {
             }
 
             let slots = self.schedule_repo.find_slots(sched.id).await?;
-            for slot in slots
-                .iter()
-                .filter(|s| s.enabled && s.time_of_day == aligned)
-            {
+            for slot in slots.iter().filter(|s| s.enabled && s.time_of_day == aligned) {
                 let scheduled_for = slot_utc_time(&sched.market, now, aligned);
 
                 if slot.run_scenario {
-                    self.maybe_run(sched.manager_id, slot.id, RunType::Scenario, scheduled_for)
-                        .await;
+                    self.maybe_run(
+                        sched.manager_id,
+                        slot.id,
+                        RunType::Scenario,
+                        scheduled_for,
+                    )
+                    .await;
                 }
 
                 if slot.run_trade {
-                    self.maybe_run(sched.manager_id, slot.id, RunType::Trade, scheduled_for)
-                        .await;
+                    self.maybe_run(
+                        sched.manager_id,
+                        slot.id,
+                        RunType::Trade,
+                        scheduled_for,
+                    )
+                    .await;
                 }
             }
         }
@@ -168,8 +175,12 @@ impl Scheduler {
         }
 
         match run_type {
-            RunType::Scenario => self.run_scenario_job(manager_id, run.id, slot_id).await,
-            RunType::Trade => self.run_trade_job(manager_id, run.id).await,
+            RunType::Scenario => {
+                self.run_scenario_job(manager_id, run.id, slot_id).await
+            }
+            RunType::Trade => {
+                self.run_trade_job(manager_id, run.id).await
+            }
         }
     }
 
@@ -249,85 +260,49 @@ impl Scheduler {
             Ok(Some(m)) => m,
             Ok(None) => {
                 tracing::warn!("manager {manager_id} not found, skipping trade job");
-                let _ = self
-                    .run_repo
-                    .update_status(run_id, ScheduleRunStatus::Skipped, None)
-                    .await;
+                let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Skipped, None).await;
                 return;
             }
             Err(e) => {
                 tracing::error!("failed to load manager {manager_id}: {e}");
-                let _ = self
-                    .run_repo
-                    .update_status(run_id, ScheduleRunStatus::Failed, Some(e.to_string()))
-                    .await;
+                let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Failed, Some(e.to_string())).await;
                 return;
             }
         };
 
         let Some(order_plan_svc) = &self.order_plan_svc else {
-            tracing::warn!(
-                "order_plan_svc not configured, skipping trade job for manager {manager_id}"
-            );
-            let _ = self
-                .run_repo
-                .update_status(run_id, ScheduleRunStatus::Skipped, None)
-                .await;
+            tracing::warn!("order_plan_svc not configured, skipping trade job for manager {manager_id}");
+            let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Skipped, None).await;
             return;
         };
 
-        let items = match self
-            .scenario_item_repo
-            .find_pending_for_manager(manager_id)
-            .await
-        {
+        let items = match self.scenario_item_repo.find_pending_for_manager(manager_id).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("failed to load scenario items for {manager_id}: {e}");
-                let _ = self
-                    .run_repo
-                    .update_status(run_id, ScheduleRunStatus::Failed, Some(e.to_string()))
-                    .await;
+                let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Failed, Some(e.to_string())).await;
                 return;
             }
         };
 
         if items.is_empty() {
-            tracing::info!(
-                "no pending scenario items for manager {manager_id}, skipping trade job"
-            );
-            let _ = self
-                .run_repo
-                .update_status(run_id, ScheduleRunStatus::Skipped, None)
-                .await;
+            tracing::info!("no pending scenario items for manager {manager_id}, skipping trade job");
+            let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Skipped, None).await;
             return;
         }
 
         let mut any_error: Option<String> = None;
         for item in &items {
-            match order_plan_svc
-                .create_from_scenario_item(manager_id, item.id)
-                .await
-            {
+            match order_plan_svc.create_from_scenario_item(manager_id, item.id).await {
                 Ok(plan) => {
-                    tracing::info!(
-                        "order plan {} created (risk: {})",
-                        plan.id,
-                        plan.risk_status
-                    );
+                    tracing::info!("order plan {} created (risk: {})", plan.id, plan.risk_status);
                     if manager.auto_trade_enabled {
                         // symbol_code를 채워서 실행 (symbol_repo 주입 없이 MVP에서는 스킵)
                         // TODO: symbol_repo 주입 후 symbol_code 해결
                         let mut plan_with_ctx = plan;
                         plan_with_ctx.symbol_code = None; // execute_approved는 symbol_code 필수 → live-trading feature 없으면 no-op
-                        if let Err(e) = order_plan_svc
-                            .execute_approved(&plan_with_ctx, manager.broker_connection_id)
-                            .await
-                        {
-                            tracing::warn!(
-                                "execute_approved failed for plan {}: {e}",
-                                plan_with_ctx.id
-                            );
+                        if let Err(e) = order_plan_svc.execute_approved(&plan_with_ctx, manager.broker_connection_id).await {
+                            tracing::warn!("execute_approved failed for plan {}: {e}", plan_with_ctx.id);
                         }
                     }
                 }
@@ -343,10 +318,7 @@ impl Scheduler {
         } else {
             ScheduleRunStatus::Success
         };
-        let _ = self
-            .run_repo
-            .update_status(run_id, final_status, any_error)
-            .await;
+        let _ = self.run_repo.update_status(run_id, final_status, any_error).await;
     }
 
     /// KIS 투자자 수급 + 네이버 컨센서스 + 뉴스를 best-effort로 수집해 EvidenceCard 반환
@@ -359,10 +331,7 @@ impl Scheduler {
 
         // KIS 투자자 수급 (공식, 신뢰도 높음)
         if let Some(kis) = &self.kis_client {
-            match kis
-                .domestic_investor_flow(symbol_code, INVESTOR_FLOW_DAYS)
-                .await
-            {
+            match kis.domestic_investor_flow(symbol_code, INVESTOR_FLOW_DAYS).await {
                 Ok(flow) if !flow.is_empty() => {
                     cards.push(evidence_builder::from_investor_flow(symbol_id, &flow));
                 }
@@ -423,7 +392,10 @@ fn time_diff_secs(a: NaiveTime, b: NaiveTime) -> i64 {
 fn slot_utc_time(market: &Market, now: DateTime<Utc>, slot_time: NaiveTime) -> DateTime<Utc> {
     let tz: Tz = market.timezone().parse().unwrap_or(chrono_tz::UTC);
     let local = now.with_timezone(&tz);
-    let naive_dt = local.naive_local().date().and_time(slot_time);
+    let naive_dt = local
+        .naive_local()
+        .date()
+        .and_time(slot_time);
     tz.from_local_datetime(&naive_dt)
         .single()
         .map(|dt| dt.with_timezone(&Utc))
