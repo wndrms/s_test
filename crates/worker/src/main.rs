@@ -20,7 +20,9 @@ use lumos_infra::db::repo::scenario::{
 };
 use lumos_infra::db::repo::schedule::{PgManagerScheduleRepository, PgScheduleRunRepository};
 use lumos_infra::db::repo::symbol::PgSymbolRepository;
+use lumos_infra::providers::naver_news::NaverNewsClient;
 use lumos_infra::scenario::mock_llm::MockLlmProvider;
+use lumos_infra::scenario::openai_llm::OpenAiLlmProvider;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,7 +30,14 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL not set")?;
-    let encryption_key = std::env::var("ENCRYPTION_KEY").context("ENCRYPTION_KEY not set")?;
+    let encryption_key = std::env::var("ENCRYPTION_KEY").unwrap_or_else(|_| {
+        tracing::warn!("ENCRYPTION_KEY not set — generating random key (data will not persist across restarts)");
+        use rand::RngCore;
+        use base64::Engine;
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        base64::engine::general_purpose::STANDARD.encode(key)
+    });
 
     let pool = pg_pool::connect(&database_url).await?;
 
@@ -49,7 +58,16 @@ async fn main() -> anyhow::Result<()> {
     let scenario_run_repo = Arc::new(PgScenarioRunRepository::new(pool.clone()));
     let scenario_item_repo: Arc<dyn lumos_app::repo::scenario::ScenarioItemRepository> =
         Arc::new(PgScenarioItemRepository::new(pool.clone()));
-    let llm = Arc::new(MockLlmProvider::new());
+    let llm: Arc<dyn lumos_domain::port::llm::LlmProvider> =
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            let model = std::env::var("OPENAI_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+            tracing::info!(model, "LLM: OpenAI 연결");
+            Arc::new(OpenAiLlmProvider::new(api_key, model))
+        } else {
+            tracing::warn!("OPENAI_API_KEY 미설정 — MockLlmProvider 사용");
+            Arc::new(MockLlmProvider::new())
+        };
 
     let report_repo: Arc<dyn lumos_app::repo::analysis_report::AnalysisReportRepository> =
         Arc::new(PgAnalysisReportRepository::new(pool.clone()));
@@ -90,6 +108,17 @@ async fn main() -> anyhow::Result<()> {
         scenario_item_repo,
     )
     .with_order_plan_svc(order_plan_svc);
+
+    // 네이버 뉴스 클라이언트 (NAVER_CLIENT_ID + NAVER_CLIENT_SECRET 둘 다 있어야 활성화)
+    if let (Ok(client_id), Ok(client_secret)) = (
+        std::env::var("NAVER_CLIENT_ID"),
+        std::env::var("NAVER_CLIENT_SECRET"),
+    ) {
+        tracing::info!("Naver News API 활성화");
+        sched_builder = sched_builder.with_news_client(NaverNewsClient::new(client_id, client_secret));
+    } else {
+        tracing::warn!("NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 미설정 — 뉴스 수집 비활성화");
+    }
 
     if let Some(client) = kis_client {
         sched_builder = sched_builder.with_kis_client(Arc::new(client));

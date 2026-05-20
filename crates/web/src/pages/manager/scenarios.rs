@@ -1,42 +1,268 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
+use uuid::Uuid;
 
-use crate::api::client::list_scenarios;
+use crate::api::client::{fetch_llm_keys, list_scenarios, trigger_scenario_run, LlmKeyDto, SymbolDto};
 use crate::api::types::ScenarioItemDto;
 use crate::components::badge::{ActionLabel, ScenarioBadge};
+use crate::components::symbol_search::SymbolSearch;
+
+const OPENAI_MODELS: &[(&str, &str)] = &[
+    ("gpt-4o", "GPT-4o"),
+    ("gpt-4o-mini", "GPT-4o Mini"),
+    ("gpt-4-turbo", "GPT-4 Turbo"),
+];
+
+const GEMINI_MODELS: &[(&str, &str)] = &[
+    ("gemini-2.0-flash-exp", "Gemini 2.0 Flash (Exp)"),
+    ("gemini-1.5-flash", "Gemini 1.5 Flash"),
+    ("gemini-1.5-flash-8b", "Gemini 1.5 Flash 8B"),
+    ("gemini-1.5-pro", "Gemini 1.5 Pro"),
+];
 
 #[component]
 pub fn ScenariosTab() -> impl IntoView {
     let params = use_params_map();
     let id_str = move || params.with(|p| p.get("id").unwrap_or_default());
+    let show_generate_form = RwSignal::new(false);
 
     let scenarios = LocalResource::new(move || {
         let id = id_str();
         async move {
-            let uuid = uuid::Uuid::parse_str(&id).ok()?;
+            let uuid = Uuid::parse_str(&id).ok()?;
             list_scenarios(uuid).await.ok()
         }
     });
 
     view! {
+        <div style="margin-bottom:24px;display:flex;gap:12px;flex-wrap:wrap;">
+            <button
+                class="btn btn-primary btn-sm"
+                on:click=move |_| show_generate_form.set(!show_generate_form.get())
+            >
+                {move || if show_generate_form.get() { "취소" } else { "+ 시나리오 생성" }}
+            </button>
+        </div>
+
+        {move || show_generate_form.get().then(|| {
+            let manager_id = Uuid::parse_str(&id_str()).ok();
+            manager_id.map(|mid| view! {
+                <GenerateScenarioForm
+                    manager_id=mid
+                    on_success=move || {
+                        show_generate_form.set(false);
+                    }
+                />
+            })
+        })}
+
         <Suspense fallback=move || view! { <ScenarioSkeleton/> }>
             {move || match scenarios.get().map(|w| (*w).clone()) {
                 None => view! { <ScenarioSkeleton/> }.into_any(),
-                Some(None) => view! { <p class="text-muted">"시나리오를 불러오지 못했습니다."</p> }.into_any(),
+                Some(None) => view! {
+                    <p class="text-muted">"시나리오를 불러오지 못했습니다."</p>
+                }.into_any(),
                 Some(Some(list)) if list.is_empty() => view! {
                     <div class="empty-state">
                         <span class="empty-icon">"◈"</span>
                         <p>"생성된 시나리오가 없습니다."</p>
-                        <p class="text-muted">"스케줄을 설정하면 자동으로 시나리오가 생성됩니다."</p>
+                        <p class="text-muted">"위 버튼으로 시나리오를 생성하거나 스케줄을 설정하세요."</p>
                     </div>
                 }.into_any(),
                 Some(Some(list)) => view! {
                     <div class="scenario-grid">
-                        {list.into_iter().map(|s: ScenarioItemDto| view! { <ScenarioCard item=s/> }).collect_view()}
+                        {list.into_iter().map(|s| view! { <ScenarioCard item=s/> }).collect_view()}
                     </div>
                 }.into_any(),
             }}
         </Suspense>
+    }
+}
+
+#[component]
+fn GenerateScenarioForm(manager_id: Uuid, on_success: impl Fn() + 'static + Copy) -> impl IntoView {
+    let selected_key = RwSignal::new(Option::<Uuid>::None);
+    let selected_provider = RwSignal::new("gemini".to_string());
+    let selected_model = RwSignal::new("gemini-1.5-flash".to_string());
+    let selected_symbol = RwSignal::new(Option::<SymbolDto>::None);
+    let base_price = RwSignal::new(String::new());
+    let submitting = RwSignal::new(false);
+    let error = RwSignal::new(Option::<String>::None);
+    let llm_keys = RwSignal::new(Vec::<LlmKeyDto>::new());
+
+    // LLM 키 목록 로드
+    leptos::task::spawn_local(async move {
+        if let Ok(keys) = fetch_llm_keys().await {
+            llm_keys.set(keys);
+        }
+    });
+
+    let on_submit = move |ev: web_sys::SubmitEvent| {
+        ev.prevent_default();
+
+        let Some(symbol) = selected_symbol.get() else {
+            error.set(Some("종목을 선택하세요".to_string()));
+            return;
+        };
+
+        let key_id = selected_key.get();
+        let model = selected_model.get();
+        let price = base_price.get();
+
+        if price.is_empty() {
+            error.set(Some("기준 가격을 입력하세요".to_string()));
+            return;
+        }
+
+        submitting.set(true);
+        error.set(None);
+
+        leptos::task::spawn_local(async move {
+            match trigger_scenario_run(manager_id, symbol.id, key_id, &model, &price).await {
+                Ok(_) => {
+                    on_success();
+                }
+                Err(e) => error.set(Some(format!("생성 실패: {e}"))),
+            }
+            submitting.set(false);
+        });
+    };
+
+    view! {
+        <div class="card" style="margin-bottom:24px;">
+            <div class="card-section-title">"새 시나리오 생성"</div>
+
+            {move || error.get().map(|e| view! {
+                <div class="alert alert-error" style="margin-bottom:16px;">{e}</div>
+            })}
+
+            <form on:submit=on_submit>
+                <div class="form-group">
+                    <label class="form-label">"종목 선택"</label>
+                    <SymbolSearch on_select=move |symbol: SymbolDto| {
+                        selected_symbol.set(Some(symbol));
+                    }/>
+                    {move || selected_symbol.get().map(|symbol| view! {
+                        <div style="margin-top:8px;padding:8px;background:var(--bg-2);border-radius:4px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;">
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <span class=format!("badge badge-{}", if symbol.region == "KR" { "blue" } else { "green" })>
+                                        {symbol.region.clone()}
+                                    </span>
+                                    <span class="font-semibold">{symbol.display_code.clone()}</span>
+                                    <span class="text-muted" style="font-size:13px;">
+                                        {symbol.name_ko.clone().or(symbol.name_en.clone()).unwrap_or_default()}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-ghost btn-sm"
+                                    on:click=move |_| selected_symbol.set(None)
+                                >
+                                    "✕"
+                                </button>
+                            </div>
+                        </div>
+                    })}
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">"기준 가격"</label>
+                    <input
+                        type="text"
+                        class="form-input"
+                        placeholder="예: 70000"
+                        prop:value=move || base_price.get()
+                        on:input=move |ev| base_price.set(event_target_value(&ev))
+                        required
+                    />
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">"LLM API 키"</label>
+                    {move || {
+                        let keys = llm_keys.get();
+                        if keys.is_empty() {
+                            view! {
+                                <div class="alert" style="background:var(--bg-2);padding:12px;">
+                                    <p class="text-muted" style="font-size:13px;">
+                                        "등록된 LLM 키가 없습니다. "
+                                        <a href="/llm-keys" style="color:var(--primary);">"LLM 키 관리"</a>
+                                        " 페이지에서 키를 등록하세요."
+                                    </p>
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <select
+                                    class="form-input"
+                                    on:change=move |ev| {
+                                        let val = event_target_value(&ev);
+                                        if val.is_empty() {
+                                            selected_key.set(None);
+                                            selected_provider.set("gemini".to_string());
+                                        } else if let Ok(key_id) = Uuid::parse_str(&val) {
+                                            selected_key.set(Some(key_id));
+                                            if let Some(key) = keys.iter().find(|k| k.id == key_id) {
+                                                selected_provider.set(key.provider.clone());
+                                            }
+                                        }
+                                    }
+                                >
+                                    <option value="">"서버 기본 LLM 사용"</option>
+                                    {keys.iter().map(|key| {
+                                        let provider_badge = match key.provider.as_str() {
+                                            "gemini" => "🔵",
+                                            _ => "🟢",
+                                        };
+                                        let key_id_str = key.id.to_string();
+                                        let display = format!("{} {} ({})", provider_badge, key.label, key.provider);
+                                        view! {
+                                            <option value=key_id_str>{display}</option>
+                                        }
+                                    }).collect_view()}
+                                </select>
+                            }.into_any()
+                        }
+                    }}
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">"모델 선택"</label>
+                    <select
+                        class="form-input"
+                        prop:value=move || selected_model.get()
+                        on:change=move |ev| selected_model.set(event_target_value(&ev))
+                    >
+                        {move || {
+                            let models = match selected_provider.get().as_str() {
+                                "openai" => OPENAI_MODELS,
+                                _ => GEMINI_MODELS,
+                            };
+                            models.iter().map(|(value, label)| {
+                                view! {
+                                    <option value=*value>{*label}</option>
+                                }
+                            }).collect_view()
+                        }}
+                    </select>
+                    <div class="form-hint">
+                        {move || match selected_provider.get().as_str() {
+                            "openai" => "OpenAI 모델 선택",
+                            _ => "Google Gemini 모델 선택",
+                        }}
+                    </div>
+                </div>
+
+                <button
+                    type="submit"
+                    class="btn btn-primary btn-sm"
+                    prop:disabled=submitting
+                >
+                    {move || if submitting.get() { "생성 중..." } else { "생성" }}
+                </button>
+            </form>
+        </div>
     }
 }
 

@@ -106,6 +106,7 @@ async fn list_managers(
 
 async fn get_manager(
     State(state): State<AppState>,
+    auth_user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<ManagerResponse>> {
     let manager = state
@@ -113,6 +114,11 @@ async fn get_manager(
         .get(id)
         .await
         .map_err(ApiError::from)?;
+    if manager.user_id != auth_user.user_id {
+        return Err(ApiError::from(AppError::Forbidden(
+            "manager does not belong to this user".to_string(),
+        )));
+    }
     Ok(Json(ManagerResponse::from(manager)))
 }
 
@@ -192,8 +198,11 @@ async fn validate_kis_connection(
         &product,
         environment,
     );
-    let account = validate_kis_balance(&client, region).await?;
-    Ok(Json(account))
+
+    validate_kis_balance(&client, region)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 async fn verify_kis_auth(
@@ -201,33 +210,31 @@ async fn verify_kis_auth(
     _auth_user: AuthUser,
     Json(req): Json<ValidateKisConnectionRequest>,
 ) -> ApiResult<Json<VerifyKisAuthResponse>> {
-    let environment = match req.mode.as_str() {
-        "live" => BrokerEnvironment::Real,
-        _ => BrokerEnvironment::Paper,
-    };
-    let product = req
-        .account_product
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "01".to_string());
-    let client = build_kis_client(
-        &req.app_key,
-        &req.app_secret,
-        &req.account_no,
-        &product,
-        environment,
-    );
-    
-    // Try to issue a token to verify credentials
-    match client.issue_access_token().await {
-        Ok(_) => Ok(Json(VerifyKisAuthResponse {
-            success: true,
-            message: "KIS 인증 성공".to_string(),
-        })),
-        Err(e) => Ok(Json(VerifyKisAuthResponse {
+    // 입력값 검증만 수행 (토큰 발급 X, API 호출 제한 회피)
+    if req.app_key.trim().is_empty() {
+        return Ok(Json(VerifyKisAuthResponse {
             success: false,
-            message: format!("KIS 인증 실패: {}", e),
-        })),
+            message: "App Key가 비어있습니다".to_string(),
+        }));
     }
+    if req.app_secret.trim().is_empty() {
+        return Ok(Json(VerifyKisAuthResponse {
+            success: false,
+            message: "App Secret이 비어있습니다".to_string(),
+        }));
+    }
+    if req.account_no.trim().is_empty() {
+        return Ok(Json(VerifyKisAuthResponse {
+            success: false,
+            message: "계좌번호가 비어있습니다".to_string(),
+        }));
+    }
+
+    // 입력값이 유효하면 성공 반환 (실제 인증은 validate_kis_connection에서)
+    Ok(Json(VerifyKisAuthResponse {
+        success: true,
+        message: "입력값 확인 완료".to_string(),
+    }))
 }
 
 async fn resolve_broker_connection_id(
@@ -463,8 +470,19 @@ fn required_env(key: &str) -> ApiResult<String> {
 
 async fn get_risk_policy(
     State(state): State<AppState>,
+    auth_user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<lumos_domain::model::risk::RiskPolicy>> {
+    let manager = state
+        .manager_service
+        .get(id)
+        .await
+        .map_err(ApiError::from)?;
+    if manager.user_id != auth_user.user_id {
+        return Err(ApiError::from(AppError::Forbidden(
+            "manager does not belong to this user".to_string(),
+        )));
+    }
     let policy = state
         .manager_service
         .get_risk_policy(id)
@@ -480,9 +498,20 @@ pub struct SetAutoTradeRequest {
 
 async fn set_auto_trade(
     State(state): State<AppState>,
+    auth_user: AuthUser,
     Path(id): Path<Uuid>,
     Json(req): Json<SetAutoTradeRequest>,
 ) -> ApiResult<Json<ManagerResponse>> {
+    let existing = state
+        .manager_service
+        .get(id)
+        .await
+        .map_err(ApiError::from)?;
+    if existing.user_id != auth_user.user_id {
+        return Err(ApiError::from(AppError::Forbidden(
+            "manager does not belong to this user".to_string(),
+        )));
+    }
     let manager = state
         .manager_service
         .set_auto_trade(id, req.enabled)

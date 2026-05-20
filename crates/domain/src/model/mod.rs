@@ -1,5 +1,6 @@
 pub mod broker;
 pub mod manager;
+pub mod manager_universe;
 pub mod market;
 pub mod order;
 pub mod risk;

@@ -25,6 +25,8 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 sqlx.workspace = true
 dotenvy.workspace = true
+rand.workspace = true
+base64.workspace = true
 
 [features]
 default = ["offline-fixtures"]

@@ -52,19 +52,16 @@ impl SecretService {
     }
 
     pub async fn decrypt_raw(&self, id: Uuid) -> AppResult<Vec<u8>> {
-        let key = self
+        let raw = self
             .repo
-            .find_by_id(id)
+            .find_raw_by_id(id)
             .await
             .map_err(AppError::Internal)?
             .ok_or_else(|| AppError::NotFound(format!("secret key {id}")))?;
 
-        // encrypted_payload is fetched separately by infra layer
-        // This service delegates decryption to the encryptor
-        let _ = key;
-        Err(AppError::Internal(anyhow::anyhow!(
-            "decrypt_raw requires encrypted_payload from infra layer"
-        )))
+        self.encryptor
+            .decrypt(&raw.encrypted_payload)
+            .map_err(AppError::Internal)
     }
 
     pub async fn list_for_user(&self, user_id: Uuid) -> AppResult<Vec<SecretKey>> {

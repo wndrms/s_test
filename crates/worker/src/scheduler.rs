@@ -18,7 +18,9 @@ use lumos_domain::model::scenario::EvidenceCard;
 use lumos_domain::model::schedule::{Market, RunType, ScheduleRunStatus};
 use lumos_infra::kis::client::KisClient;
 use lumos_infra::providers::naver_finance::NaverFinanceClient;
+use lumos_infra::providers::naver_news::NaverNewsClient;
 use lumos_infra::scenario::evidence_builder;
+use lumos_domain::port::news::{NewsProvider, NewsQuery};
 
 const TICK_SECS: u64 = 30;
 /// 5분 슬롯 내에서 실행 허용 오차 (초)
@@ -36,6 +38,7 @@ pub struct Scheduler {
     order_plan_svc: Option<Arc<OrderPlanService>>,
     kis_client: Option<Arc<KisClient>>,
     naver_client: Arc<NaverFinanceClient>,
+    news_client: Option<Arc<NaverNewsClient>>,
 }
 
 impl Scheduler {
@@ -57,6 +60,7 @@ impl Scheduler {
             order_plan_svc: None,
             kis_client: None,
             naver_client: Arc::new(NaverFinanceClient::new()),
+            news_client: None,
         }
     }
 
@@ -67,6 +71,11 @@ impl Scheduler {
 
     pub fn with_order_plan_svc(mut self, svc: Arc<OrderPlanService>) -> Self {
         self.order_plan_svc = Some(svc);
+        self
+    }
+
+    pub fn with_news_client(mut self, client: NaverNewsClient) -> Self {
+        self.news_client = Some(Arc::new(client));
         self
     }
 
@@ -204,6 +213,7 @@ impl Scheduler {
                     "v1".to_string(),
                     "0".to_string(),
                     extra_evidence,
+                    None,
                 )
                 .await;
 
@@ -339,7 +349,7 @@ impl Scheduler {
             .await;
     }
 
-    /// KIS 투자자 수급 + 네이버 컨센서스를 best-effort로 수집해 EvidenceCard 반환
+    /// KIS 투자자 수급 + 네이버 컨센서스 + 뉴스를 best-effort로 수집해 EvidenceCard 반환
     async fn collect_extra_evidence(
         &self,
         symbol_code: &str,
@@ -367,6 +377,30 @@ impl Scheduler {
         let naver_data = self.naver_client.fetch_integration(symbol_code).await;
         if let Some(card) = evidence_builder::from_naver_consensus(symbol_id, &naver_data) {
             cards.push(card);
+        }
+
+        // 뉴스 수집 (NaverNewsClient가 주입된 경우)
+        if let Some(news) = &self.news_client {
+            let query = NewsQuery {
+                keyword: symbol_code.to_string(),
+                from: None,
+                limit: 5,
+            };
+            match news.search_news(query).await {
+                Ok(items) => {
+                    for item in &items {
+                        cards.push(evidence_builder::from_news(symbol_id, item));
+                    }
+                    tracing::debug!(
+                        symbol = symbol_code,
+                        count = items.len(),
+                        "news evidence collected"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("news collection skipped for {symbol_code}: {e}");
+                }
+            }
         }
 
         cards

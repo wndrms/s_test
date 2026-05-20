@@ -29,3 +29,5 @@ tower-http.workspace = true
 sqlx.workspace = true
 dotenvy.workspace = true
 jsonwebtoken.workspace = true
+rand.workspace = true
+base64.workspace = true

@@ -29,7 +29,9 @@
       "Bash(tmux ls *)",
       "Bash(cargo metadata *)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(p['name']\\) for p in d['packages'] if p['name']=='lumos-web' for dep in p['dependencies'] if 'web' in dep['name'].lower\\(\\) or 'wasm' in dep['name'].lower\\(\\)]\")",
-      "Bash(cargo tree *)"
+      "Bash(cargo tree *)",
+      "Bash(cp /Users/zaiden/dev/test/stock/docker-compose.local.yml /Users/zaiden/dev/test/s_test/)",
+      "Bash(cp -r /Users/zaiden/dev/test/stock/ssl /Users/zaiden/dev/test/s_test/)"
     ]
   }
 }

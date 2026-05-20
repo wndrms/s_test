@@ -1,3 +1,4 @@
+pub mod llm_key;
 pub mod manager;
 pub mod notification;
 pub mod order_plan;

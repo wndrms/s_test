@@ -11,6 +11,7 @@ pub fn Sidebar() -> impl IntoView {
             <nav class="sidebar-nav">
                 <NavItem href="/" icon="🏠" label="대시보드"/>
                 <NavItem href="/managers" icon="📊" label="매니저"/>
+                <NavItem href="/llm-keys" icon="🔑" label="LLM 키"/>
                 <NavItem href="/settings" icon="⚙️" label="설정"/>
             </nav>
         </aside>
@@ -23,6 +24,7 @@ pub fn BottomNav() -> impl IntoView {
         <nav class="bottom-nav">
             <BottomNavItem href="/" icon="🏠" label="홈"/>
             <BottomNavItem href="/managers" icon="📊" label="매니저"/>
+            <BottomNavItem href="/llm-keys" icon="🔑" label="키"/>
             <BottomNavItem href="/settings" icon="⚙️" label="설정"/>
         </nav>
     }

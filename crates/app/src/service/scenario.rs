@@ -80,6 +80,7 @@ impl ScenarioService {
         prompt_version: String,
         base_price: String,
         extra_evidence: Vec<EvidenceCard>,
+        llm_override: Option<Arc<dyn LlmProvider>>,
     ) -> AppResult<Uuid> {
         let symbol = self
             .symbol_repo
@@ -131,8 +132,13 @@ impl ScenarioService {
             prompt_version,
         };
 
+        let active_llm: &dyn LlmProvider = llm_override
+            .as_ref()
+            .map(|a| a.as_ref())
+            .unwrap_or(self.llm.as_ref());
+
         let output = if self.use_multistep {
-            match self.run_multistep_pipeline(&prompt_input, &evidence).await {
+            match self.run_multistep_pipeline_with(&prompt_input, &evidence, active_llm).await {
                 Ok(o) => o,
                 Err(e) => {
                     let _ = self
@@ -143,7 +149,7 @@ impl ScenarioService {
                 }
             }
         } else {
-            match self.llm.generate_scenario(prompt_input).await {
+            match active_llm.generate_scenario(prompt_input).await {
                 Ok(o) => o,
                 Err(e) => {
                     let _ = self
@@ -251,15 +257,14 @@ impl ScenarioService {
         Ok(run.id)
     }
 
-    /// Fundamental → News → Strategy → Critic 4단계 파이프라인
-    async fn run_multistep_pipeline(
+    async fn run_multistep_pipeline_with(
         &self,
         input: &ScenarioPromptInput,
         evidence: &[lumos_domain::model::scenario::EvidenceCard],
+        llm: &dyn LlmProvider,
     ) -> AppResult<ScenarioOutput> {
         // Step 1: Fundamental 분석
-        let fundamental = self
-            .llm
+        let fundamental = llm
             .analyze_fundamentals(&input.symbol_code, &input.base_price, evidence)
             .await
             .map_err(AppError::Internal)?;
@@ -271,8 +276,7 @@ impl ScenarioService {
         );
 
         // Step 2: News/Event 분석
-        let news = self
-            .llm
+        let news = llm
             .analyze_news_events(&input.symbol_code, evidence)
             .await
             .map_err(AppError::Internal)?;
@@ -285,8 +289,7 @@ impl ScenarioService {
         );
 
         // Step 3: Strategy 초안 생성
-        let draft = self
-            .llm
+        let draft = llm
             .draft_strategy(input, &fundamental, &news)
             .await
             .map_err(AppError::Internal)?;
@@ -297,9 +300,8 @@ impl ScenarioService {
             "multistep: strategy draft done"
         );
 
-        // Step 4: Critic 검토 (최대 2회 재시도)
-        let critic = self
-            .llm
+        // Step 4: Critic 검토
+        let critic = llm
             .critic_review(input, &draft, &fundamental, &news)
             .await
             .map_err(AppError::Internal)?;

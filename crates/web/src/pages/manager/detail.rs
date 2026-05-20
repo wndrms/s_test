@@ -9,6 +9,7 @@ use crate::components::layout::AppLayout;
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
     Scenario,
+    Universe,
     Holdings,
     Trades,
     Analysis,
@@ -20,6 +21,7 @@ impl Tab {
     fn label(self) -> &'static str {
         match self {
             Tab::Scenario => "시나리오",
+            Tab::Universe => "종목",
             Tab::Holdings => "보유",
             Tab::Trades => "거래",
             Tab::Analysis => "분석",
@@ -30,6 +32,7 @@ impl Tab {
     fn path_suffix(self) -> &'static str {
         match self {
             Tab::Scenario => "",
+            Tab::Universe => "/universe",
             Tab::Holdings => "/holdings",
             Tab::Trades => "/trades",
             Tab::Analysis => "/analysis",
@@ -116,7 +119,7 @@ fn ManagerDetailInner(manager: ManagerDto) -> impl IntoView {
             </div>
 
             <div class="tabs">
-                {[Tab::Scenario, Tab::Holdings, Tab::Trades, Tab::Analysis, Tab::Schedule, Tab::Settings]
+                {[Tab::Scenario, Tab::Universe, Tab::Holdings, Tab::Trades, Tab::Analysis, Tab::Schedule, Tab::Settings]
                     .into_iter()
                     .map(|tab| {
                         let href = tab_href(tab);

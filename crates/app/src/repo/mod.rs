@@ -4,6 +4,7 @@ pub mod broker_connection;
 pub mod broker_order;
 pub mod holdings;
 pub mod manager;
+pub mod manager_universe;
 pub mod order_plan;
 pub mod scenario;
 pub mod schedule;

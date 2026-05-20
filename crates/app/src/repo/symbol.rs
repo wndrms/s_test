@@ -11,4 +11,7 @@ pub trait SymbolRepository: Send + Sync {
     async fn find_by_code(&self, region: &Region, code: &str) -> Result<Option<Symbol>>;
     async fn find_active(&self) -> Result<Vec<Symbol>>;
     async fn find_identifiers(&self, symbol_id: Uuid) -> Result<Vec<SymbolIdentifier>>;
+
+    /// 종목 코드 또는 이름으로 검색 (LIKE 검색)
+    async fn search(&self, query: &str, region: Option<&Region>, limit: i64) -> Result<Vec<Symbol>>;
 }

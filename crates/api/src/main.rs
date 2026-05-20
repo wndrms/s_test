@@ -22,6 +22,7 @@ use lumos_infra::db::repo::broker_connection::PgBrokerConnectionRepository;
 use lumos_infra::db::repo::broker_order::PgBrokerOrderRepository;
 use lumos_infra::db::repo::holdings::PgHoldingsRepository;
 use lumos_infra::db::repo::manager::{PgManagerRepository, PgRiskPolicyRepository};
+use lumos_infra::db::repo::manager_universe::PgManagerUniverseRepository;
 use lumos_infra::db::repo::order_plan::PgOrderPlanRepository;
 use lumos_infra::db::repo::scenario::{
     PgEvidenceCardRepository, PgScenarioItemRepository, PgScenarioRunRepository,
@@ -31,8 +32,40 @@ use lumos_infra::db::repo::schedule_mgmt::PgManagerScheduleWriteRepository;
 use lumos_infra::db::repo::symbol::PgSymbolRepository;
 use lumos_infra::db::repo::trades::PgTradesRepository;
 use lumos_infra::db::repo::user::PgSecretKeyRepository;
+use lumos_app::service::llm_key::{LlmKeyService, LlmProviderFactory};
+use lumos_domain::port::llm::LlmProvider as LlmProviderTrait;
 use lumos_infra::providers::mock_notification::MockNotificationProvider;
+use lumos_infra::scenario::gemini_llm::GeminiLlmProvider;
 use lumos_infra::scenario::mock_llm::MockLlmProvider;
+use lumos_infra::scenario::openai_llm::OpenAiLlmProvider;
+
+struct DefaultProviderFactory;
+
+impl LlmProviderFactory for DefaultProviderFactory {
+    fn build_openai(
+        &self,
+        api_key: String,
+        model: String,
+        base_url: Option<String>,
+    ) -> Arc<dyn LlmProviderTrait> {
+        match base_url {
+            Some(url) => Arc::new(OpenAiLlmProvider::with_base_url(api_key, model, url)),
+            None => Arc::new(OpenAiLlmProvider::new(api_key, model)),
+        }
+    }
+
+    fn build_gemini(
+        &self,
+        api_key: String,
+        model: String,
+        base_url: Option<String>,
+    ) -> Arc<dyn LlmProviderTrait> {
+        match base_url {
+            Some(url) => Arc::new(GeminiLlmProvider::with_base_url(api_key, model, url)),
+            None => Arc::new(GeminiLlmProvider::new(api_key, model)),
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,7 +73,14 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL not set")?;
-    let encryption_key = std::env::var("ENCRYPTION_KEY").context("ENCRYPTION_KEY not set")?;
+    let encryption_key = std::env::var("ENCRYPTION_KEY").unwrap_or_else(|_| {
+        tracing::warn!("ENCRYPTION_KEY not set — generating random key (data will not persist across restarts)");
+        use rand::RngCore;
+        use base64::Engine;
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        base64::engine::general_purpose::STANDARD.encode(key)
+    });
     let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".into());
 
     let pool = pg_pool::connect(&database_url).await?;
@@ -50,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("migration failed")?;
 
-    let encryptor = Arc::new(
+    let encryptor: Arc<dyn lumos_app::service::secret::SecretEncryptor> = Arc::new(
         AesGcmEncryptor::from_base64(&encryption_key)
             .context("invalid ENCRYPTION_KEY — must be base64-encoded 32 bytes")?,
     );
@@ -58,14 +98,24 @@ async fn main() -> anyhow::Result<()> {
     let manager_repo = Arc::new(PgManagerRepository::new(pool.clone()));
     let policy_repo: Arc<dyn lumos_app::repo::manager::RiskPolicyRepository> =
         Arc::new(PgRiskPolicyRepository::new(pool.clone()));
-    let secret_repo = Arc::new(PgSecretKeyRepository::new(pool.clone()));
+    let secret_repo: Arc<dyn lumos_app::repo::user::SecretKeyRepository> =
+        Arc::new(PgSecretKeyRepository::new(pool.clone()));
     let symbol_repo: Arc<dyn lumos_app::repo::symbol::SymbolRepository> =
         Arc::new(PgSymbolRepository::new(pool.clone()));
     let evidence_repo = Arc::new(PgEvidenceCardRepository::new(pool.clone()));
     let scenario_run_repo = Arc::new(PgScenarioRunRepository::new(pool.clone()));
     let scenario_item_repo: Arc<dyn lumos_app::repo::scenario::ScenarioItemRepository> =
         Arc::new(PgScenarioItemRepository::new(pool.clone()));
-    let llm = Arc::new(MockLlmProvider::new());
+    let llm: Arc<dyn lumos_domain::port::llm::LlmProvider> =
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            let model = std::env::var("OPENAI_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+            tracing::info!(model, "LLM: OpenAI 연결");
+            Arc::new(OpenAiLlmProvider::new(api_key, model))
+        } else {
+            tracing::warn!("OPENAI_API_KEY 미설정 — MockLlmProvider 사용");
+            Arc::new(MockLlmProvider::new())
+        };
 
     let holdings_repo = Arc::new(PgHoldingsRepository::new(pool.clone()));
     let trades_repo = Arc::new(PgTradesRepository::new(pool.clone()));
@@ -78,13 +128,24 @@ async fn main() -> anyhow::Result<()> {
     let broker_connection_repo = Arc::new(PgBrokerConnectionRepository::new(pool.clone()));
     let broker_order_repo: Arc<dyn lumos_app::repo::broker_order::BrokerOrderRepository> =
         Arc::new(PgBrokerOrderRepository::new(pool.clone()));
+    let manager_universe_repo: Arc<dyn lumos_app::repo::manager_universe::ManagerUniverseRepository> =
+        Arc::new(PgManagerUniverseRepository::new(pool.clone()));
 
     let manager_service = Arc::new(
         ManagerService::new(manager_repo, Arc::clone(&policy_repo)).with_broker_connection_repo(
             Arc::clone(&broker_connection_repo) as Arc<dyn BrokerConnectionRepository>,
         ),
     );
-    let secret_service = Arc::new(SecretService::new(secret_repo, encryptor));
+    let secret_service = Arc::new(SecretService::new(
+        Arc::clone(&secret_repo),
+        Arc::clone(&encryptor),
+    ));
+    let llm_key_service = Arc::new(LlmKeyService::new(
+        Arc::clone(&secret_repo),
+        Arc::clone(&encryptor),
+        Arc::clone(&llm),
+        Arc::new(DefaultProviderFactory),
+    ));
     let scenario_service = Arc::new(
         ScenarioService::new(
             llm,
@@ -117,6 +178,8 @@ async fn main() -> anyhow::Result<()> {
         notification_service,
         broker_connection_repo: broker_connection_repo as Arc<dyn BrokerConnectionRepository>,
         broker_order_repo,
+        llm_key_service,
+        manager_universe_repo,
     };
 
     let app = routes::router(app_state)

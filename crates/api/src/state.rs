@@ -5,11 +5,13 @@ use lumos_app::repo::broker_connection::BrokerConnectionRepository;
 use lumos_app::repo::broker_order::BrokerOrderRepository;
 use lumos_app::repo::holdings::HoldingsRepository;
 use lumos_app::repo::manager::RiskPolicyRepository;
+use lumos_app::repo::manager_universe::ManagerUniverseRepository;
 use lumos_app::repo::order_plan::OrderPlanRepository;
 use lumos_app::repo::scenario::ScenarioItemRepository;
 use lumos_app::repo::schedule::{ManagerScheduleRepository, ManagerScheduleWriteRepository};
 use lumos_app::repo::symbol::SymbolRepository;
 use lumos_app::repo::trades::TradesRepository;
+use lumos_app::service::llm_key::LlmKeyService;
 use lumos_app::service::manager::ManagerService;
 use lumos_app::service::notification::NotificationService;
 use lumos_app::service::scenario::ScenarioService;
@@ -34,4 +36,6 @@ pub struct AppState {
     pub notification_service: Arc<NotificationService>,
     pub broker_connection_repo: Arc<dyn BrokerConnectionRepository>,
     pub broker_order_repo: Arc<dyn BrokerOrderRepository>,
+    pub llm_key_service: Arc<LlmKeyService>,
+    pub manager_universe_repo: Arc<dyn ManagerUniverseRepository>,
 }

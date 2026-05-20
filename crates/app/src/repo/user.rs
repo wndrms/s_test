@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use lumos_domain::model::user::{SecretKey, User};
+use lumos_domain::model::user::{SecretKey, SecretKeyRaw, User};
 
 #[async_trait]
 pub trait UserRepository: Send + Sync {
@@ -30,4 +30,5 @@ pub trait SecretKeyRepository: Send + Sync {
         masked_hint: Option<String>,
     ) -> Result<SecretKey>;
     async fn delete(&self, id: Uuid) -> Result<()>;
+    async fn find_raw_by_id(&self, id: Uuid) -> Result<Option<SecretKeyRaw>>;
 }

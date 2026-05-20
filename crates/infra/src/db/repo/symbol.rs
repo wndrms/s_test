@@ -147,6 +147,51 @@ impl SymbolRepository for PgSymbolRepository {
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
+
+    async fn search(&self, query: &str, region: Option<&Region>, limit: i64) -> Result<Vec<Symbol>> {
+        let search_pattern = format!("%{}%", query);
+
+        let rows: Vec<SymbolRow> = if let Some(reg) = region {
+            let region_str = reg.to_string();
+            sqlx::query_as::<_, SymbolRow>(
+                r#"SELECT id, region, market, code, display_code, name_ko, name_en,
+                          currency, active, created_at, updated_at
+                   FROM symbols
+                   WHERE active = true
+                     AND region = $1
+                     AND (code ILIKE $2 OR display_code ILIKE $2 OR name_ko ILIKE $2 OR name_en ILIKE $2)
+                   ORDER BY
+                     CASE WHEN code = $3 THEN 0 ELSE 1 END,
+                     code
+                   LIMIT $4"#,
+            )
+            .bind(&region_str)
+            .bind(&search_pattern)
+            .bind(query)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, SymbolRow>(
+                r#"SELECT id, region, market, code, display_code, name_ko, name_en,
+                          currency, active, created_at, updated_at
+                   FROM symbols
+                   WHERE active = true
+                     AND (code ILIKE $1 OR display_code ILIKE $1 OR name_ko ILIKE $1 OR name_en ILIKE $1)
+                   ORDER BY
+                     CASE WHEN code = $2 THEN 0 ELSE 1 END,
+                     region, code
+                   LIMIT $3"#,
+            )
+            .bind(&search_pattern)
+            .bind(query)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
 }
 
 #[cfg(test)]

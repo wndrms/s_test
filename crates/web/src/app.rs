@@ -6,9 +6,10 @@ use leptos_router::{
 };
 
 use crate::pages::{
-    home::HomePage, manager::analysis::AnalysisTab, manager::detail::ManagerDetailPage,
-    manager::holdings::HoldingsTab, manager::scenarios::ScenariosTab,
-    manager::schedule::ScheduleTab, manager::settings::SettingsTab, manager::trades::TradesTab,
+    home::HomePage, llm_keys::LlmKeysPage, manager::analysis::AnalysisTab,
+    manager::detail::ManagerDetailPage, manager::holdings::HoldingsTab,
+    manager::scenarios::ScenariosTab, manager::schedule::ScheduleTab,
+    manager::settings::SettingsTab, manager::trades::TradesTab, manager::universe::UniverseTab,
     manager_new::ManagerNewPage, managers::ManagersPage, not_found::NotFoundPage,
     settings::SettingsPage,
 };
@@ -45,9 +46,11 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/") view=HomePage/>
                 <Route path=path!("/managers") view=ManagersPage/>
                 <Route path=path!("/managers/new") view=ManagerNewPage/>
+                <Route path=path!("/llm-keys") view=LlmKeysPage/>
                 <Route path=path!("/settings") view=SettingsPage/>
                 <ParentRoute path=path!("/managers/:id") view=ManagerDetailPage>
                     <Route path=path!("") view=ScenariosTab/>
+                    <Route path=path!("/universe") view=UniverseTab/>
                     <Route path=path!("/holdings") view=HoldingsTab/>
                     <Route path=path!("/trades") view=TradesTab/>
                     <Route path=path!("/schedule") view=ScheduleTab/>

@@ -12,6 +12,7 @@ use lumos_app::error::AppError;
 use lumos_domain::model::scenario::{ScenarioAction, ScenarioItem, ScenarioRun, ScenarioType};
 use rust_decimal::Decimal;
 
+use crate::auth::AuthUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
@@ -29,6 +30,12 @@ pub struct TriggerRunRequest {
     pub model_name: String,
     pub prompt_version: String,
     pub base_price: String,
+    /// 사용자가 등록한 LLM 키 ID. None이면 서버 기본 LLM 사용.
+    #[serde(default)]
+    pub llm_key_id: Option<Uuid>,
+    /// OpenAI 호환 커스텀 엔드포인트 (로컬 LLM 등). llm_key_id와 함께 사용.
+    #[serde(default)]
+    pub base_url_override: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,9 +45,27 @@ pub struct TriggerRunResponse {
 
 async fn trigger_run(
     State(state): State<AppState>,
+    auth_user: AuthUser,
     Path(manager_id): Path<Uuid>,
     Json(req): Json<TriggerRunRequest>,
 ) -> ApiResult<Json<TriggerRunResponse>> {
+    let llm_override = if req.llm_key_id.is_some() {
+        Some(
+            state
+                .llm_key_service
+                .resolve_provider(
+                    auth_user.user_id,
+                    req.llm_key_id,
+                    &req.model_name,
+                    req.base_url_override.as_deref(),
+                )
+                .await
+                .map_err(ApiError::from)?,
+        )
+    } else {
+        None
+    };
+
     let run_id = state
         .scenario_service
         .run_for_symbol(
@@ -52,6 +77,7 @@ async fn trigger_run(
             req.prompt_version,
             req.base_price,
             vec![],
+            llm_override,
         )
         .await
         .map_err(ApiError::from)?;

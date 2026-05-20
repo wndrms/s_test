@@ -2,6 +2,39 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SymbolDto {
+    pub id: Uuid,
+    pub region: String,
+    pub market: String,
+    pub code: String,
+    pub display_code: String,
+    pub name_ko: Option<String>,
+    pub name_en: Option<String>,
+    pub currency: String,
+}
+
+impl SymbolDto {
+    pub fn display_name(&self) -> String {
+        if let Some(name) = &self.name_ko {
+            format!("{} ({})", name, self.code)
+        } else if let Some(name) = &self.name_en {
+            format!("{} ({})", name, self.code)
+        } else {
+            self.code.clone()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmKeyDto {
+    pub id: Uuid,
+    pub provider: String,
+    pub label: String,
+    pub masked_hint: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagerDto {
     pub id: Uuid,
     pub name: String,
@@ -168,4 +201,12 @@ pub struct AnalysisReportDto {
     pub data_freshness_level: Option<String>,
     pub evidence: Vec<EvidenceCardDto>,
     pub annotations: Vec<ChartAnnotationDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ManagerSymbolDto {
+    pub manager_id: Uuid,
+    pub symbol_id: Uuid,
+    pub enabled: bool,
+    pub created_at: String,
 }

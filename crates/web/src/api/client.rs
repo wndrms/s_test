@@ -1,16 +1,14 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 use uuid::Uuid;
 
 use lumos_domain::model::broker::BrokerAccount;
 use super::types::{
-    AnalysisReportDto, HoldingDto, ManagerDto, RiskPolicyDto, ScenarioItemDto, ScenarioRunDto,
-    TradeDto,
+    AnalysisReportDto, HoldingDto, ManagerDto, ManagerSymbolDto, RiskPolicyDto, ScenarioItemDto,
+    ScenarioRunDto, TradeDto,
 };
 
-const AUTH_TOKEN_STORAGE_KEY: &str = "lumos.dev.jwt";
+pub use super::types::{LlmKeyDto, ManagerSymbolDto as ManagerSymbolDtoExport, SymbolDto};
 
 #[derive(Debug, Serialize)]
 pub struct CreateManagerRequest {
@@ -30,55 +28,8 @@ pub struct CreateManagerRequest {
     pub kis_account_product: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct DevTokenResponse {
-    pub token: String,
-    pub user_id: Uuid,
-    pub expires_in_hours: i64,
-}
-
 fn base_url() -> &'static str {
     option_env!("API_BASE_URL").unwrap_or("/api")
-}
-
-pub fn save_auth_token(token: &str) {
-    if let Some(storage) = local_storage() {
-        let _ = storage.set_item(AUTH_TOKEN_STORAGE_KEY, token);
-    }
-}
-
-fn clear_auth_token() {
-    if let Some(storage) = local_storage() {
-        let _ = storage.remove_item(AUTH_TOKEN_STORAGE_KEY);
-    }
-}
-
-fn auth_token() -> Option<String> {
-    local_storage()?
-        .get_item(AUTH_TOKEN_STORAGE_KEY)
-        .ok()
-        .flatten()
-        .filter(|token| !token.trim().is_empty())
-}
-
-fn local_storage() -> Option<web_sys::Storage> {
-    web_sys::window()?.local_storage().ok().flatten()
-}
-
-fn auth_token_for(path: &str) -> Pin<Box<dyn Future<Output = Result<Option<String>>>>> {
-    let path = path.to_string();
-    Box::pin(async move {
-        if let Some(token) = auth_token() {
-            return Ok(Some(token));
-        }
-        if path == "/auth/token" {
-            return Ok(None);
-        }
-
-        let resp = request_dev_token(None).await?;
-        save_auth_token(&resp.token);
-        Ok(Some(resp.token))
-    })
 }
 
 async fn get_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T> {
@@ -87,32 +38,23 @@ async fn get_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T> {
 
 async fn get_json_internal<T: serde::de::DeserializeOwned>(path: &str) -> Result<T> {
     let url = format!("{}{}", base_url(), path);
-    let mut retry = true;
+    let req = gloo_net::http::Request::get(&url);
 
-    loop {
-        let mut req = gloo_net::http::Request::get(&url);
-        if let Some(token) = auth_token_for(path).await? {
-            req = req.header("Authorization", &format!("Bearer {token}"));
-        }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("GET {url} failed"))?;
 
-        let resp = req
-            .send()
-            .await
-            .with_context(|| format!("GET {url} failed"))?;
-        if resp.status() == 401 && retry {
-            clear_auth_token();
-            retry = false;
-            continue;
-        }
-        if !resp.ok() {
-            anyhow::bail!("GET {url} returned {}", resp.status());
-        }
-        let data = resp
-            .json::<T>()
-            .await
-            .with_context(|| format!("GET {url} json parse failed"))?;
-        return Ok(data);
+    if !resp.ok() {
+        anyhow::bail!("GET {url} returned {}", resp.status());
     }
+
+    let data = resp
+        .json::<T>()
+        .await
+        .with_context(|| format!("GET {url} json parse failed"))?;
+
+    Ok(data)
 }
 
 async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
@@ -120,35 +62,24 @@ async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
     body: &B,
 ) -> Result<T> {
     let url = format!("{}{}", base_url(), path);
-    let mut retry = true;
+    let req = gloo_net::http::Request::post(&url);
 
-    loop {
-        let mut req = gloo_net::http::Request::post(&url);
-        if let Some(token) = auth_token_for(path).await? {
-            req = req.header("Authorization", &format!("Bearer {token}"));
-        }
+    let req = req
+        .json(body)
+        .with_context(|| format!("POST {url} serialize failed"))?;
 
-        let req = req
-            .json(body)
-            .with_context(|| format!("POST {url} serialize failed"))?;
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("POST {url} failed"))?;
 
-        let resp = req
-            .send()
-            .await
-            .with_context(|| format!("POST {url} failed"))?;
-        if resp.status() == 401 && retry {
-            clear_auth_token();
-            retry = false;
-            continue;
-        }
-        if !resp.ok() {
-            anyhow::bail!("POST {url} returned {}", resp.status());
-        }
-        return resp
-            .json::<T>()
-            .await
-            .with_context(|| format!("POST {url} json parse failed"));
+    if !resp.ok() {
+        anyhow::bail!("POST {url} returned {}", resp.status());
     }
+
+    resp.json::<T>()
+        .await
+        .with_context(|| format!("POST {url} json parse failed"))
 }
 
 // ─── Manager ─────────────────────────────────────────────────────────────────
@@ -240,18 +171,143 @@ pub async fn verify_kis_auth(req: ValidateKisConnectionRequest) -> Result<Verify
 }
 
 // ─── Auth (Dev) ───────────────────────────────────────────────────────────────
+// 자동 인증으로 변경되어 더 이상 토큰 발급이 필요 없음
 
-pub async fn get_dev_token(user_id: Option<Uuid>) -> Result<DevTokenResponse> {
-    let resp = request_dev_token(user_id).await?;
-    save_auth_token(&resp.token);
-    Ok(resp)
+// ─── LLM Keys ─────────────────────────────────────────────────────────────────
+
+pub async fn fetch_llm_keys() -> Result<Vec<LlmKeyDto>> {
+    get_json("/llm-keys").await
 }
 
-async fn request_dev_token(user_id: Option<Uuid>) -> Result<DevTokenResponse> {
-    #[derive(Serialize)]
-    struct Req {
-        user_id: Option<Uuid>,
+#[derive(Debug, Serialize)]
+struct CreateLlmKeyRequest {
+    provider: String,
+    label: String,
+    api_key: String,
+}
+
+pub async fn create_llm_key(provider: &str, label: &str, api_key: &str) -> Result<LlmKeyDto> {
+    post_json(
+        "/llm-keys",
+        &CreateLlmKeyRequest {
+            provider: provider.to_string(),
+            label: label.to_string(),
+            api_key: api_key.to_string(),
+        },
+    )
+    .await
+}
+
+pub async fn delete_llm_key(key_id: Uuid) -> Result<()> {
+    delete_json(&format!("/llm-keys/{key_id}")).await
+}
+
+// ─── Scenarios ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct TriggerScenarioRunRequest {
+    symbol_id: Uuid,
+    schedule_slot_id: Option<Uuid>,
+    model_provider: String,
+    model_name: String,
+    prompt_version: String,
+    base_price: String,
+    llm_key_id: Option<Uuid>,
+}
+
+pub async fn trigger_scenario_run(
+    manager_id: Uuid,
+    symbol_id: Uuid,
+    llm_key_id: Option<Uuid>,
+    model_name: &str,
+    base_price: &str,
+) -> Result<Uuid> {
+    let provider = if llm_key_id.is_some() {
+        // 키가 있으면 해당 키의 프로바이더 사용
+        "user".to_string()
+    } else {
+        // 서버 기본 LLM 사용
+        if model_name.starts_with("gemini") {
+            "gemini".to_string()
+        } else {
+            "openai".to_string()
+        }
+    };
+
+    #[derive(Debug, Deserialize)]
+    struct TriggerResponse {
+        run_id: Uuid,
     }
 
-    post_json("/auth/token", &Req { user_id }).await
+    let resp: TriggerResponse = post_json(
+        &format!("/managers/{manager_id}/scenarios/runs"),
+        &TriggerScenarioRunRequest {
+            symbol_id,
+            schedule_slot_id: None,
+            model_provider: provider,
+            model_name: model_name.to_string(),
+            prompt_version: "v1".to_string(),
+            base_price: base_price.to_string(),
+            llm_key_id,
+        },
+    )
+    .await?;
+
+    Ok(resp.run_id)
+}
+
+// ─── Symbols ──────────────────────────────────────────────────────────────────
+
+pub async fn search_symbols(query: &str, region: Option<&str>) -> Result<Vec<SymbolDto>> {
+    let encoded_query = query.replace(' ', "%20").replace('&', "%26");
+    let mut url = format!("/symbols/search?q={}", encoded_query);
+    if let Some(r) = region {
+        url.push_str(&format!("&region={}", r));
+    }
+    get_json(&url).await
+}
+
+pub async fn list_symbols() -> Result<Vec<SymbolDto>> {
+    get_json("/symbols").await
+}
+
+async fn delete_json(path: &str) -> Result<()> {
+    let url = format!("{}{}", base_url(), path);
+    let req = gloo_net::http::Request::delete(&url);
+
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("DELETE {} failed", path))?;
+
+    if !resp.ok() {
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "(failed to read body)".to_string());
+        anyhow::bail!("DELETE {} returned {}: {}", path, status, body);
+    }
+
+    Ok(())
+}
+
+// ─── Manager Universe ─────────────────────────────────────────────────────────
+
+pub async fn fetch_manager_symbols(manager_id: Uuid) -> Result<Vec<ManagerSymbolDto>> {
+    get_json(&format!("/managers/{}/universe", manager_id)).await
+}
+
+#[derive(Debug, Serialize)]
+struct SetSymbolsRequest {
+    symbol_ids: Vec<Uuid>,
+}
+
+pub async fn set_manager_symbols(manager_id: Uuid, symbol_ids: Vec<Uuid>) -> Result<()> {
+    post_json::<_, serde_json::Value>(
+        &format!("/managers/{}/universe", manager_id),
+        &SetSymbolsRequest { symbol_ids },
+    )
+    .await?;
+    Ok(())
 }
