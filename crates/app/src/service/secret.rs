@@ -54,6 +54,16 @@ impl SecretService {
             .map_err(AppError::Internal)
     }
 
+    pub fn encrypt_payload(&self, plaintext: &[u8]) -> AppResult<Vec<u8>> {
+        self.encryptor
+            .encrypt(plaintext)
+            .map_err(AppError::Internal)
+    }
+
+    pub fn mask(&self, raw: &str) -> String {
+        self.encryptor.mask(raw)
+    }
+
     pub async fn list_for_user(&self, user_id: Uuid) -> AppResult<Vec<SecretKey>> {
         self.repo
             .find_by_user(user_id)

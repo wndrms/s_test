@@ -1,7 +1,7 @@
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
+use leptos_router::hooks::{use_navigate, use_params_map};
 
-use crate::api::client::get_risk_policy;
+use crate::api::client::{delete_manager, get_risk_policy};
 
 #[component]
 pub fn SettingsTab() -> impl IntoView {
@@ -66,13 +66,72 @@ pub fn SettingsTab() -> impl IntoView {
                                 <p class="text-muted" style="font-size:0.85rem;margin-bottom:12px;">
                                     "매니저를 삭제해도 주문·체결·분석 기록은 보존됩니다."
                                 </p>
-                                <button class="btn btn-danger btn-sm">"매니저 삭제"</button>
+                                <DeleteManagerButton/>
                             </div>
                         </div>
                     }.into_any(),
                 }}
             </Suspense>
         </div>
+    }
+}
+
+#[component]
+fn DeleteManagerButton() -> impl IntoView {
+    let params = use_params_map();
+    let navigate = use_navigate();
+    let deleting = RwSignal::new(false);
+    let delete_error = RwSignal::new(None::<String>);
+    let confirm_delete = RwSignal::new(false);
+
+    let on_delete = move |_| {
+        delete_error.set(None);
+
+        if !confirm_delete.get() {
+            confirm_delete.set(true);
+            return;
+        }
+
+        let manager_id =
+            params.with(|p| p.get("id").and_then(|id| uuid::Uuid::parse_str(&id).ok()));
+        let Some(manager_id) = manager_id else {
+            delete_error.set(Some("매니저 ID를 확인할 수 없습니다.".to_string()));
+            return;
+        };
+
+        deleting.set(true);
+        let nav = navigate.clone();
+        leptos::task::spawn_local(async move {
+            match delete_manager(manager_id).await {
+                Ok(_) => nav("/managers", Default::default()),
+                Err(e) => {
+                    delete_error.set(Some(format!("삭제 실패: {e}")));
+                    deleting.set(false);
+                    confirm_delete.set(false);
+                }
+            }
+        });
+    };
+
+    view! {
+        {move || delete_error.get().map(|e| view! {
+            <div class="alert alert-error" style="margin-bottom:12px;">{e}</div>
+        })}
+        <button
+            class="btn btn-danger btn-sm"
+            on:click=on_delete
+            prop:disabled=move || deleting.get()
+        >
+            {move || {
+                if deleting.get() {
+                    "삭제 중..."
+                } else if confirm_delete.get() {
+                    "한 번 더 눌러 삭제"
+                } else {
+                    "매니저 삭제"
+                }
+            }}
+        </button>
     }
 }
 

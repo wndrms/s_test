@@ -2,11 +2,11 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use lumos_domain::model::broker::BrokerAccount;
 use super::types::{
     AnalysisReportDto, HoldingDto, ManagerDto, ManagerSymbolDto, RiskPolicyDto, ScenarioItemDto,
     ScenarioRunDto, TradeDto,
 };
+use lumos_domain::model::broker::BrokerAccount;
 
 pub use super::types::{LlmKeyDto, ManagerSymbolDto as ManagerSymbolDtoExport, SymbolDto};
 
@@ -17,7 +17,8 @@ pub struct CreateManagerRequest {
     pub mode: String,
     pub region: String,
     pub base_currency: String,
-    pub initial_capital: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_capital: Option<f64>,
     #[serde(default)]
     pub kis_app_key: Option<String>,
     #[serde(default)]
@@ -90,6 +91,10 @@ pub async fn list_managers() -> Result<Vec<ManagerDto>> {
 
 pub async fn get_manager(id: Uuid) -> Result<ManagerDto> {
     get_json(&format!("/managers/{id}")).await
+}
+
+pub async fn delete_manager(id: Uuid) -> Result<()> {
+    delete_json(&format!("/managers/{id}")).await
 }
 
 pub async fn get_risk_policy(id: Uuid) -> Result<RiskPolicyDto> {

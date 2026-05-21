@@ -1,8 +1,10 @@
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -22,7 +24,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list_managers).post(create_manager))
         .route("/validate-kis", post(validate_kis_connection))
         .route("/verify-kis-auth", post(verify_kis_auth))
-        .route("/:id", get(get_manager))
+        .route("/:id", get(get_manager).delete(delete_manager))
         .route("/:id/risk-policy", get(get_risk_policy))
         .route("/:id/auto-trade", post(set_auto_trade))
 }
@@ -68,7 +70,8 @@ pub struct CreateManagerRequest {
     pub mode: String,
     pub region: String,
     pub base_currency: String,
-    pub initial_capital: rust_decimal::Decimal,
+    #[serde(default)]
+    pub initial_capital: Option<Decimal>,
     #[serde(default)]
     pub kis_app_key: Option<String>,
     #[serde(default)]
@@ -122,6 +125,19 @@ async fn get_manager(
     Ok(Json(ManagerResponse::from(manager)))
 }
 
+async fn delete_manager(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    state
+        .manager_service
+        .delete(auth_user.user_id, id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn create_manager(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -139,7 +155,7 @@ async fn create_manager(
         "USD" => Currency::Usd,
         _ => Currency::Krw,
     };
-    let broker_connection_id = resolve_broker_connection_id(
+    let broker_connection = resolve_broker_connection(
         &state,
         auth_user.user_id,
         req.broker_connection_id,
@@ -151,15 +167,30 @@ async fn create_manager(
         region.clone(),
     )
     .await?;
+    let initial_capital = match mode {
+        ManagerMode::Paper => match req.initial_capital {
+            Some(value) if value > Decimal::ZERO => value,
+            _ => {
+                return Err(ApiError::from(AppError::Validation(
+                    "initial_capital is required for paper managers".to_string(),
+                )))
+            }
+        },
+        ManagerMode::Live => broker_connection
+            .account
+            .as_ref()
+            .map(|account| account.total_equity)
+            .unwrap_or(Decimal::ZERO),
+    };
 
     let input = CreateManagerInput {
         user_id: auth_user.user_id,
-        broker_connection_id,
+        broker_connection_id: broker_connection.id,
         name: req.name,
         mode,
         region,
         base_currency: currency,
-        initial_capital: req.initial_capital,
+        initial_capital,
     };
 
     let manager = state
@@ -237,7 +268,12 @@ async fn verify_kis_auth(
     }))
 }
 
-async fn resolve_broker_connection_id(
+struct BrokerConnectionResolution {
+    id: Uuid,
+    account: Option<BrokerAccount>,
+}
+
+async fn resolve_broker_connection(
     state: &AppState,
     user_id: Uuid,
     requested_id: Option<Uuid>,
@@ -247,9 +283,9 @@ async fn resolve_broker_connection_id(
     kis_account_product: Option<&str>,
     mode: ManagerMode,
     region: Region,
-) -> ApiResult<Uuid> {
+) -> ApiResult<BrokerConnectionResolution> {
     if let Some(id) = requested_id.filter(|id| *id != Uuid::nil()) {
-        return Ok(id);
+        return Ok(BrokerConnectionResolution { id, account: None });
     }
 
     let has_kis_creds = kis_app_key
@@ -296,7 +332,10 @@ async fn resolve_broker_connection_id(
         .await
         .map_err(|e| ApiError::from(AppError::Internal(e)))?;
     if let Some(conn) = existing.into_iter().next() {
-        return Ok(conn.id);
+        return Ok(BrokerConnectionResolution {
+            id: conn.id,
+            account: None,
+        });
     }
 
     create_env_broker_connection(state, user_id).await
@@ -311,21 +350,37 @@ async fn create_kis_broker_connection(
     account_product: &str,
     mode: ManagerMode,
     region: Region,
-) -> ApiResult<Uuid> {
+) -> ApiResult<BrokerConnectionResolution> {
     let environment = match mode {
         ManagerMode::Live => BrokerEnvironment::Real,
         _ => BrokerEnvironment::Paper,
     };
-    let client = build_kis_client(app_key, app_secret, account_no, account_product, environment.clone());
-    validate_kis_balance(&client, region).await?;
+    let client = build_kis_client(
+        app_key,
+        app_secret,
+        account_no,
+        account_product,
+        environment.clone(),
+    );
+    let account = validate_kis_balance(&client, region).await?;
 
     let app_key_secret = state
         .secret_service
-        .store(user_id, "kis".to_string(), format!("kis_app_key:{}", account_no), app_key)
+        .store(
+            user_id,
+            "kis".to_string(),
+            format!("kis_app_key:{}", account_no),
+            app_key,
+        )
         .await?;
     let app_secret_secret = state
         .secret_service
-        .store(user_id, "kis".to_string(), format!("kis_app_secret:{}", account_no), app_secret)
+        .store(
+            user_id,
+            "kis".to_string(),
+            format!("kis_app_secret:{}", account_no),
+            app_secret,
+        )
         .await?;
     let account_no_encrypted = state
         .secret_service
@@ -350,17 +405,19 @@ async fn create_kis_broker_connection(
         .await
         .map_err(|e| ApiError::from(AppError::Internal(e)))?;
 
-    Ok(conn.id)
+    Ok(BrokerConnectionResolution {
+        id: conn.id,
+        account: Some(account),
+    })
 }
 
-async fn validate_kis_balance(
-    client: &KisClient,
-    region: Region,
-) -> ApiResult<BrokerAccount> {
+async fn validate_kis_balance(client: &KisClient, region: Region) -> ApiResult<BrokerAccount> {
     // Ensure we have a bearer token before calling online endpoints.
     // If token issuance fails, surface as internal error.
-    if let Err(e) = client.issue_access_token().await {
-        return Err(ApiError::from(AppError::Internal(e)));
+    if client.requires_access_token_for_balance() {
+        if let Err(e) = client.issue_access_token().await {
+            return Err(ApiError::from(AppError::Internal(e)));
+        }
     }
     let (account, _) = match region {
         Region::Kr => client.domestic_balance().await,
@@ -390,7 +447,10 @@ fn build_kis_client(
     )
 }
 
-async fn create_env_broker_connection(state: &AppState, user_id: Uuid) -> ApiResult<Uuid> {
+async fn create_env_broker_connection(
+    state: &AppState,
+    user_id: Uuid,
+) -> ApiResult<BrokerConnectionResolution> {
     let app_key = required_env("KIS_APP_KEY")?;
     let app_secret = required_env("KIS_APP_SECRET")?;
     let account_no = required_env("KIS_ACCOUNT_NO")?;
@@ -432,7 +492,10 @@ async fn create_env_broker_connection(state: &AppState, user_id: Uuid) -> ApiRes
         .await
         .map_err(|e| ApiError::from(AppError::Internal(e)))?;
 
-    Ok(conn.id)
+    Ok(BrokerConnectionResolution {
+        id: conn.id,
+        account: None,
+    })
 }
 
 async fn ensure_env_secret(

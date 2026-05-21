@@ -6,22 +6,22 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 use uuid::Uuid;
 
-use lumos_domain::model::broker::{
-    BrokerAccount, BrokerFill, BrokerOrderResponse, BrokerPosition,
-    BuyingPower, BuyingPowerRequest, CancelOrderRequest, LimitOrderRequest, OrderFillQuery,
-    OrderSide,
-};
 #[cfg(feature = "live-trading")]
 use lumos_domain::model::broker::BrokerOrderStatus;
+use lumos_domain::model::broker::{
+    BrokerAccount, BrokerFill, BrokerOrderResponse, BrokerPosition, BuyingPower,
+    BuyingPowerRequest, CancelOrderRequest, LimitOrderRequest, OrderFillQuery, OrderSide,
+};
 use lumos_domain::model::market::QuoteSnapshot;
 use lumos_domain::model::symbol::Currency;
 use lumos_domain::port::broker::Broker;
 
 use super::dto::{
     DomesticBalancePosition, DomesticBalanceResponse, DomesticCancelOrderBody, DomesticOrderBody,
-    DomesticQuoteResponse, InvestorFlowItem, InvestorFlowResponse, OverseasBalancePosition,
-    OverseasBalanceResponse, OverseasOrderBody, OverseasQuoteResponse, OrderFillOutput,
-    OrderFillsResponse, OrderResponse, OrderResponseOutput, TokenResponse,
+    DomesticQuoteResponse, InvestorFlowItem, InvestorFlowResponse, OrderFillOutput,
+    OrderFillsResponse, OrderResponse, OrderResponseOutput, OverseasBalancePosition,
+    OverseasBalanceResponse, OverseasBalanceSummary, OverseasOrderBody, OverseasQuoteResponse,
+    TokenResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +88,17 @@ impl KisClient {
         Ok(token)
     }
 
+    pub fn requires_access_token_for_balance(&self) -> bool {
+        #[cfg(feature = "offline-fixtures")]
+        {
+            self.env == KisEnvironment::Real
+        }
+        #[cfg(not(feature = "offline-fixtures"))]
+        {
+            true
+        }
+    }
+
     async fn bearer_token(&self) -> Result<String> {
         let guard = self.access_token.read().await;
         guard
@@ -99,14 +110,24 @@ impl KisClient {
 
     pub async fn domestic_quote(&self, symbol_code: &str) -> Result<QuoteSnapshot> {
         #[cfg(feature = "offline-fixtures")]
-        return self.domestic_quote_fixture(symbol_code);
+        {
+            if self.env == KisEnvironment::Real {
+                return self.domestic_quote_online(symbol_code).await;
+            }
+            return self.domestic_quote_fixture(symbol_code);
+        }
         #[cfg(not(feature = "offline-fixtures"))]
         self.domestic_quote_online(symbol_code).await
     }
 
     pub async fn overseas_quote(&self, symbol_code: &str, market: &str) -> Result<QuoteSnapshot> {
         #[cfg(feature = "offline-fixtures")]
-        return self.overseas_quote_fixture(symbol_code, market);
+        {
+            if self.env == KisEnvironment::Real {
+                return self.overseas_quote_online(symbol_code, market).await;
+            }
+            return self.overseas_quote_fixture(symbol_code, market);
+        }
         #[cfg(not(feature = "offline-fixtures"))]
         self.overseas_quote_online(symbol_code, market).await
     }
@@ -114,16 +135,16 @@ impl KisClient {
     #[cfg(feature = "offline-fixtures")]
     fn domestic_quote_fixture(&self, symbol_code: &str) -> Result<QuoteSnapshot> {
         let fixture_path = format!(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/src/kis/fixtures/domestic_quote_{}.json"),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/kis/fixtures/domestic_quote_{}.json"
+            ),
             symbol_code
         );
-        let fallback = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/kis/fixtures/domestic_quote_sample.json"
+        let data = read_fixture_or_embedded(
+            &fixture_path,
+            include_str!("fixtures/domestic_quote_sample.json"),
         );
-        let data = std::fs::read_to_string(&fixture_path)
-            .or_else(|_| std::fs::read_to_string(fallback))
-            .context("domestic quote fixture not found")?;
         let resp: DomesticQuoteResponse = serde_json::from_str(&data)?;
         parse_domestic_quote(&resp, symbol_code)
     }
@@ -131,16 +152,16 @@ impl KisClient {
     #[cfg(feature = "offline-fixtures")]
     fn overseas_quote_fixture(&self, symbol_code: &str, _market: &str) -> Result<QuoteSnapshot> {
         let fixture_path = format!(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/src/kis/fixtures/overseas_quote_{}.json"),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/kis/fixtures/overseas_quote_{}.json"
+            ),
             symbol_code
         );
-        let fallback = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/kis/fixtures/overseas_quote_sample.json"
+        let data = read_fixture_or_embedded(
+            &fixture_path,
+            include_str!("fixtures/overseas_quote_sample.json"),
         );
-        let data = std::fs::read_to_string(&fixture_path)
-            .or_else(|_| std::fs::read_to_string(fallback))
-            .context("overseas quote fixture not found")?;
         let resp: OverseasQuoteResponse = serde_json::from_str(&data)?;
         parse_overseas_quote(&resp, symbol_code)
     }
@@ -148,7 +169,10 @@ impl KisClient {
     #[allow(dead_code)]
     async fn domestic_quote_online(&self, symbol_code: &str) -> Result<QuoteSnapshot> {
         let token = self.bearer_token().await?;
-        let url = format!("{}/uapi/domestic-stock/v1/quotations/inquire-price", self.env.base_url());
+        let url = format!(
+            "{}/uapi/domestic-stock/v1/quotations/inquire-price",
+            self.env.base_url()
+        );
         let resp = self
             .http
             .get(&url)
@@ -156,7 +180,10 @@ impl KisClient {
             .header("appkey", &self.app_key)
             .header("appsecret", &self.app_secret)
             .header("tr_id", "FHKST01010100")
-            .query(&[("FID_COND_MRKT_DIV_CODE", "J"), ("FID_INPUT_ISCD", symbol_code)])
+            .query(&[
+                ("FID_COND_MRKT_DIV_CODE", "J"),
+                ("FID_INPUT_ISCD", symbol_code),
+            ])
             .send()
             .await?
             .json::<DomesticQuoteResponse>()
@@ -168,9 +195,16 @@ impl KisClient {
     }
 
     #[allow(dead_code)]
-    async fn overseas_quote_online(&self, symbol_code: &str, market: &str) -> Result<QuoteSnapshot> {
+    async fn overseas_quote_online(
+        &self,
+        symbol_code: &str,
+        market: &str,
+    ) -> Result<QuoteSnapshot> {
         let token = self.bearer_token().await?;
-        let url = format!("{}/uapi/overseas-price/v1/quotations/price", self.env.base_url());
+        let url = format!(
+            "{}/uapi/overseas-price/v1/quotations/price",
+            self.env.base_url()
+        );
         let resp = self
             .http
             .get(&url)
@@ -193,7 +227,12 @@ impl KisClient {
 
     pub async fn domestic_balance(&self) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
         #[cfg(feature = "offline-fixtures")]
-        return self.domestic_balance_fixture();
+        {
+            if self.env == KisEnvironment::Real {
+                return self.domestic_balance_online().await;
+            }
+            return self.domestic_balance_fixture();
+        }
         #[cfg(not(feature = "offline-fixtures"))]
         self.domestic_balance_online().await
     }
@@ -204,7 +243,8 @@ impl KisClient {
             env!("CARGO_MANIFEST_DIR"),
             "/src/kis/fixtures/domestic_balance_sample.json"
         );
-        let data = std::fs::read_to_string(path).context("domestic balance fixture not found")?;
+        let data =
+            read_fixture_or_embedded(path, include_str!("fixtures/domestic_balance_sample.json"));
         let resp: DomesticBalanceResponse = serde_json::from_str(&data)?;
         parse_domestic_balance(&resp, Uuid::nil())
     }
@@ -212,14 +252,24 @@ impl KisClient {
     #[allow(dead_code)]
     async fn domestic_balance_online(&self) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
         let token = self.bearer_token().await?;
-        let url = format!("{}/uapi/domestic-stock/v1/trading/inquire-balance", self.env.base_url());
+        let url = format!(
+            "{}/uapi/domestic-stock/v1/trading/inquire-balance",
+            self.env.base_url()
+        );
         let resp = self
             .http
             .get(&url)
             .header("authorization", format!("Bearer {token}"))
             .header("appkey", &self.app_key)
             .header("appsecret", &self.app_secret)
-            .header("tr_id", if self.env == KisEnvironment::Real { "TTTC8434R" } else { "VTTC8434R" })
+            .header(
+                "tr_id",
+                if self.env == KisEnvironment::Real {
+                    "TTTC8434R"
+                } else {
+                    "VTTC8434R"
+                },
+            )
             .query(&[
                 ("CANO", self.account_no.as_str()),
                 ("ACNT_PRDT_CD", self.account_product.as_str()),
@@ -290,29 +340,51 @@ impl KisClient {
 
     // ─── Overseas Balance / Positions ────────────────────────────────────────
 
-    pub async fn overseas_balance(&self, exchange: &str) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
+    pub async fn overseas_balance(
+        &self,
+        exchange: &str,
+    ) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
         #[cfg(feature = "offline-fixtures")]
-        return self.overseas_balance_fixture(exchange);
+        {
+            if self.env == KisEnvironment::Real {
+                return self.overseas_balance_online(exchange).await;
+            }
+            return self.overseas_balance_fixture(exchange);
+        }
         #[cfg(not(feature = "offline-fixtures"))]
         self.overseas_balance_online(exchange).await
     }
 
     #[cfg(feature = "offline-fixtures")]
-    fn overseas_balance_fixture(&self, _exchange: &str) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
+    fn overseas_balance_fixture(
+        &self,
+        _exchange: &str,
+    ) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/kis/fixtures/overseas_balance_sample.json"
         );
-        let data = std::fs::read_to_string(path).context("overseas balance fixture not found")?;
+        let data =
+            read_fixture_or_embedded(path, include_str!("fixtures/overseas_balance_sample.json"));
         let resp: OverseasBalanceResponse = serde_json::from_str(&data)?;
         parse_overseas_balance(&resp, Uuid::nil())
     }
 
     #[allow(dead_code)]
-    async fn overseas_balance_online(&self, exchange: &str) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
+    async fn overseas_balance_online(
+        &self,
+        exchange: &str,
+    ) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
         let token = self.bearer_token().await?;
-        let tr_id = if self.env == KisEnvironment::Real { "TTTS3012R" } else { "VTTS3012R" };
-        let url = format!("{}/uapi/overseas-stock/v1/trading/inquire-balance", self.env.base_url());
+        let tr_id = if self.env == KisEnvironment::Real {
+            "TTTS3012R"
+        } else {
+            "VTTS3012R"
+        };
+        let url = format!(
+            "{}/uapi/overseas-stock/v1/trading/inquire-balance",
+            self.env.base_url()
+        );
         let resp = self
             .http
             .get(&url)
@@ -341,26 +413,39 @@ impl KisClient {
     // ─── Overseas Limit Order ─────────────────────────────────────────────────
 
     #[cfg(feature = "live-trading")]
-    pub async fn overseas_buy_limit_order(&self, req: &LimitOrderRequest) -> Result<BrokerOrderResponse> {
+    pub async fn overseas_buy_limit_order(
+        &self,
+        req: &LimitOrderRequest,
+    ) -> Result<BrokerOrderResponse> {
         self.overseas_limit_order(req, OrderSide::Buy).await
     }
 
     #[cfg(feature = "live-trading")]
-    pub async fn overseas_sell_limit_order(&self, req: &LimitOrderRequest) -> Result<BrokerOrderResponse> {
+    pub async fn overseas_sell_limit_order(
+        &self,
+        req: &LimitOrderRequest,
+    ) -> Result<BrokerOrderResponse> {
         self.overseas_limit_order(req, OrderSide::Sell).await
     }
 
     #[cfg(feature = "live-trading")]
-    async fn overseas_limit_order(&self, req: &LimitOrderRequest, side: OrderSide) -> Result<BrokerOrderResponse> {
+    async fn overseas_limit_order(
+        &self,
+        req: &LimitOrderRequest,
+        side: OrderSide,
+    ) -> Result<BrokerOrderResponse> {
         let token = self.bearer_token().await?;
         let exchange = req.market.as_deref().unwrap_or("NAS");
         let tr_id = match (&self.env, &side) {
-            (KisEnvironment::Real, OrderSide::Buy)  => "TTTT1002U",
+            (KisEnvironment::Real, OrderSide::Buy) => "TTTT1002U",
             (KisEnvironment::Real, OrderSide::Sell) => "TTTT1006U",
-            (KisEnvironment::Paper, OrderSide::Buy)  => "VTTT1002U",
+            (KisEnvironment::Paper, OrderSide::Buy) => "VTTT1002U",
             (KisEnvironment::Paper, OrderSide::Sell) => "VTTT1006U",
         };
-        let url = format!("{}/uapi/overseas-stock/v1/trading/order", self.env.base_url());
+        let url = format!(
+            "{}/uapi/overseas-stock/v1/trading/order",
+            self.env.base_url()
+        );
         let body = OverseasOrderBody {
             CANO: self.account_no.clone(),
             ACNT_PRDT_CD: self.account_product.clone(),
@@ -414,7 +499,7 @@ impl KisClient {
             env!("CARGO_MANIFEST_DIR"),
             "/src/kis/fixtures/order_fills_sample.json"
         );
-        let data = std::fs::read_to_string(path).context("order fills fixture not found")?;
+        let data = read_fixture_or_embedded(path, include_str!("fixtures/order_fills_sample.json"));
         let resp: OrderFillsResponse = serde_json::from_str(&data)?;
         parse_order_fills(&resp)
     }
@@ -426,7 +511,10 @@ impl KisClient {
         symbol_code: Option<&str>,
     ) -> Result<Vec<BrokerFill>> {
         let token = self.bearer_token().await?;
-        let url = format!("{}/uapi/domestic-stock/v1/trading/inquire-daily-ccld", self.env.base_url());
+        let url = format!(
+            "{}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+            self.env.base_url()
+        );
         let date_str = trading_date.format("%Y%m%d").to_string();
         let mut query = vec![
             ("CANO", self.account_no.as_str()),
@@ -450,7 +538,14 @@ impl KisClient {
             .header("authorization", format!("Bearer {token}"))
             .header("appkey", &self.app_key)
             .header("appsecret", &self.app_secret)
-            .header("tr_id", if self.env == KisEnvironment::Real { "TTTC8001R" } else { "VTTC8001R" })
+            .header(
+                "tr_id",
+                if self.env == KisEnvironment::Real {
+                    "TTTC8001R"
+                } else {
+                    "VTTC8001R"
+                },
+            )
             .query(&query)
             .send()
             .await?
@@ -465,10 +560,20 @@ impl KisClient {
     // ─── Cancel Order ─────────────────────────────────────────────────────────
 
     #[cfg(feature = "live-trading")]
-    pub async fn domestic_cancel_order(&self, req: &CancelOrderRequest) -> Result<BrokerOrderResponse> {
+    pub async fn domestic_cancel_order(
+        &self,
+        req: &CancelOrderRequest,
+    ) -> Result<BrokerOrderResponse> {
         let token = self.bearer_token().await?;
-        let url = format!("{}/uapi/domestic-stock/v1/trading/order-rvsecncl", self.env.base_url());
-        let tr_id = if self.env == KisEnvironment::Real { "TTTC0803U" } else { "VTTC0803U" };
+        let url = format!(
+            "{}/uapi/domestic-stock/v1/trading/order-rvsecncl",
+            self.env.base_url()
+        );
+        let tr_id = if self.env == KisEnvironment::Real {
+            "TTTC0803U"
+        } else {
+            "VTTC0803U"
+        };
         let body = DomesticCancelOrderBody {
             CANO: self.account_no.clone(),
             ACNT_PRDT_CD: self.account_product.clone(),
@@ -507,7 +612,10 @@ impl KisClient {
     // ─── Limit Order ──────────────────────────────────────────────────────────
 
     #[cfg(feature = "live-trading")]
-    pub async fn domestic_limit_order(&self, req: &LimitOrderRequest) -> Result<BrokerOrderResponse> {
+    pub async fn domestic_limit_order(
+        &self,
+        req: &LimitOrderRequest,
+    ) -> Result<BrokerOrderResponse> {
         let token = self.bearer_token().await?;
         let tr_id = match (&self.env, &req.side) {
             (KisEnvironment::Real, OrderSide::Buy) => "TTTC0802U",
@@ -515,7 +623,10 @@ impl KisClient {
             (KisEnvironment::Paper, OrderSide::Buy) => "VTTC0802U",
             (KisEnvironment::Paper, OrderSide::Sell) => "VTTC0801U",
         };
-        let url = format!("{}/uapi/domestic-stock/v1/trading/order-cash", self.env.base_url());
+        let url = format!(
+            "{}/uapi/domestic-stock/v1/trading/order-cash",
+            self.env.base_url()
+        );
         let body = DomesticOrderBody {
             CANO: self.account_no.clone(),
             ACNT_PRDT_CD: self.account_product.clone(),
@@ -595,11 +706,17 @@ impl Broker for KisClient {
     }
 
     async fn get_order_fills(&self, req: OrderFillQuery) -> Result<Vec<BrokerFill>> {
-        self.domestic_order_fills(req.trading_date, req.symbol_code.as_deref()).await
+        self.domestic_order_fills(req.trading_date, req.symbol_code.as_deref())
+            .await
     }
 }
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "offline-fixtures")]
+fn read_fixture_or_embedded(path: &str, embedded: &'static str) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|_| embedded.to_string())
+}
 
 #[cfg(feature = "offline-fixtures")]
 fn mock_investor_flow(symbol_code: &str, days: u32) -> Vec<InvestorFlowItem> {
@@ -710,10 +827,24 @@ fn parse_overseas_balance(
     broker_connection_id: Uuid,
 ) -> Result<(BrokerAccount, Vec<BrokerPosition>)> {
     let summary = &resp.output2;
-    let cash = Decimal::from_str(&summary.excc_amt)
-        .with_context(|| format!("invalid overseas cash: {}", summary.excc_amt))?;
-    let equity = Decimal::from_str(&summary.tot_asst_amt)
-        .with_context(|| format!("invalid overseas equity: {}", summary.tot_asst_amt))?;
+    let positions: Vec<_> = resp
+        .output1
+        .iter()
+        .filter_map(|p| parse_overseas_position(p).ok())
+        .collect();
+    let positions_market_value = positions.iter().fold(Decimal::ZERO, |total, position| {
+        total + position.market_value
+    });
+    let summary_market_value =
+        overseas_summary_decimal(summary, OVERSEAS_MARKET_VALUE_FIELDS)?.unwrap_or(Decimal::ZERO);
+    let market_value = if positions_market_value == Decimal::ZERO {
+        summary_market_value
+    } else {
+        positions_market_value
+    };
+    let cash = overseas_summary_decimal(summary, OVERSEAS_CASH_FIELDS)?.unwrap_or(Decimal::ZERO);
+    let equity = overseas_summary_decimal(summary, OVERSEAS_TOTAL_EQUITY_FIELDS)?
+        .unwrap_or(cash + market_value);
 
     let account = BrokerAccount {
         broker_connection_id,
@@ -723,13 +854,61 @@ fn parse_overseas_balance(
         as_of: Utc::now(),
     };
 
-    let positions = resp
-        .output1
-        .iter()
-        .filter_map(|p| parse_overseas_position(p).ok())
-        .collect();
-
     Ok((account, positions))
+}
+
+const OVERSEAS_CASH_FIELDS: &[&str] = &[
+    "excc_amt",
+    "frcr_dncl_amt_2",
+    "frcr_dncl_amt",
+    "frcr_rcvb_amt",
+    "ord_psbl_frcr_amt",
+    "frcr_ord_psbl_amt1",
+    "ovrs_ord_psbl_amt",
+];
+
+const OVERSEAS_TOTAL_EQUITY_FIELDS: &[&str] = &["tot_asst_amt", "nass_amt", "tot_evlu_amt"];
+
+const OVERSEAS_MARKET_VALUE_FIELDS: &[&str] = &[
+    "ovrs_stck_evlu_amt",
+    "frcr_evlu_amt2",
+    "frcr_evlu_amt",
+    "evlu_amt_smtl",
+];
+
+fn overseas_summary_decimal(
+    summary: &OverseasBalanceSummary,
+    fields: &[&str],
+) -> Result<Option<Decimal>> {
+    for field in fields {
+        let Some(raw) = overseas_summary_value(summary, field) else {
+            continue;
+        };
+        let normalized = raw.trim().replace(',', "");
+        if normalized.is_empty() || normalized == "-" {
+            continue;
+        }
+        return Decimal::from_str(&normalized)
+            .with_context(|| format!("invalid overseas summary {field}: {raw}"))
+            .map(Some);
+    }
+    Ok(None)
+}
+
+fn overseas_summary_value(summary: &OverseasBalanceSummary, field: &str) -> Option<String> {
+    match field {
+        "frcr_pchs_amt1" => summary.frcr_pchs_amt1.clone(),
+        "ovrs_tot_pfls" => summary.ovrs_tot_pfls.clone(),
+        "tot_evlu_pfls_amt" => summary.tot_evlu_pfls_amt.clone(),
+        "tot_asst_amt" => summary.tot_asst_amt.clone(),
+        "excc_amt" => summary.excc_amt.clone(),
+        _ => summary.extra.get(field).and_then(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| value.as_f64().map(|_| value.to_string()))
+        }),
+    }
 }
 
 fn parse_overseas_position(p: &OverseasBalancePosition) -> Result<BrokerPosition> {
@@ -850,6 +1029,35 @@ mod tests {
         let client = make_client();
         let snapshot = client.overseas_quote("AAPL", "NAS").await.unwrap();
         assert!(snapshot.last_price > Decimal::ZERO);
+    }
+
+    #[test]
+    fn overseas_balance_without_total_asset_uses_cash_plus_positions() {
+        let resp = OverseasBalanceResponse {
+            rt_cd: "0".to_string(),
+            msg_cd: "KIOK0000".to_string(),
+            msg1: "ok".to_string(),
+            output1: vec![OverseasBalancePosition {
+                ovrs_pdno: "AAPL".to_string(),
+                ovrs_item_name: "Apple Inc".to_string(),
+                ovrs_cblc_qty: "1".to_string(),
+                pchs_avg_pric: "185.50".to_string(),
+                now_pric2: "192.30".to_string(),
+                ovrs_stck_evlu_amt: "192.30".to_string(),
+                frcr_evlu_pfls_amt: "6.80".to_string(),
+                tr_crcy_cd: "USD".to_string(),
+            }],
+            output2: OverseasBalanceSummary {
+                excc_amt: Some("100.00".to_string()),
+                ..Default::default()
+            },
+        };
+
+        let (account, positions) = parse_overseas_balance(&resp, Uuid::nil()).unwrap();
+
+        assert_eq!(account.cash, Decimal::new(10000, 2));
+        assert_eq!(account.total_equity, Decimal::new(29230, 2));
+        assert_eq!(positions.len(), 1);
     }
 
     #[tokio::test]

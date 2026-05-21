@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use lumos_domain::model::manager::Manager;
+use lumos_domain::model::manager::{Manager, ManagerStatus};
 use lumos_domain::model::risk::RiskPolicy;
 
 use crate::error::{AppError, AppResult};
@@ -26,7 +26,10 @@ impl ManagerService {
         }
     }
 
-    pub fn with_broker_connection_repo(mut self, repo: Arc<dyn BrokerConnectionRepository>) -> Self {
+    pub fn with_broker_connection_repo(
+        mut self,
+        repo: Arc<dyn BrokerConnectionRepository>,
+    ) -> Self {
         self.broker_connections = Some(repo);
         self
     }
@@ -90,13 +93,26 @@ impl ManagerService {
     pub async fn set_auto_trade(&self, manager_id: Uuid, enabled: bool) -> AppResult<Manager> {
         let manager = self.get(manager_id).await?;
         if !manager.is_active() {
-            return Err(AppError::Forbidden(
-                "manager is not active".to_string(),
-            ));
+            return Err(AppError::Forbidden("manager is not active".to_string()));
         }
         self.managers
             .set_auto_trade(manager_id, enabled)
             .await
             .map_err(AppError::Internal)
+    }
+
+    pub async fn delete(&self, user_id: Uuid, manager_id: Uuid) -> AppResult<()> {
+        let manager = self.get(manager_id).await?;
+        if manager.user_id != user_id {
+            return Err(AppError::Forbidden(
+                "manager does not belong to this user".to_string(),
+            ));
+        }
+
+        self.managers
+            .update_status(manager_id, ManagerStatus::Deleted)
+            .await
+            .map_err(AppError::Internal)?;
+        Ok(())
     }
 }
