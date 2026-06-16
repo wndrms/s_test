@@ -9,7 +9,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use lumos_app::error::AppError;
-use lumos_app::repo::analysis_report::{AnalysisReport, AnalysisReportRepository, ChartAnnotation};
+use lumos_app::repo::analysis_report::{AnalysisReport, ChartAnnotation};
 use lumos_domain::model::scenario::EvidenceCard;
 
 use crate::error::{ApiError, ApiResult};

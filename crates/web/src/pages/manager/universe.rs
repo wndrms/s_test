@@ -3,7 +3,7 @@ use leptos_router::hooks::use_params_map;
 use uuid::Uuid;
 
 use crate::api::client::{
-    fetch_manager_symbols, list_symbols, set_manager_symbols, ManagerSymbolDtoExport as ManagerSymbolDto, SymbolDto,
+    fetch_manager_symbols, list_symbols, set_manager_symbols,
 };
 
 #[component]

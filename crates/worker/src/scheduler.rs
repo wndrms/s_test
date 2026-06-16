@@ -7,15 +7,18 @@ use tokio::time::{interval, Duration};
 use uuid::Uuid;
 
 use lumos_app::repo::manager::ManagerRepository;
-use lumos_app::repo::order_plan::OrderPlanRepository;
-use lumos_app::repo::scenario::ScenarioItemRepository;
-use lumos_app::repo::manager::RiskPolicyRepository;
+use lumos_app::repo::scenario::{
+    EvidenceCardRepository, ScenarioItemRepository, ScenarioOutcomeRepository,
+};
 use lumos_app::repo::schedule::{ManagerScheduleRepository, ScheduleRunRepository};
 use lumos_app::repo::symbol::SymbolRepository;
 use lumos_app::service::order_plan::OrderPlanService;
 use lumos_app::service::scenario::ScenarioService;
-use lumos_domain::model::scenario::EvidenceCard;
-use lumos_domain::model::schedule::{Market, RunType, ScheduleRunStatus};
+use lumos_domain::model::scenario::{
+    EvidenceCard, OutcomeResult, ScenarioAction, ScenarioOutcome,
+};
+use lumos_domain::model::symbol::Region;
+use lumos_domain::model::schedule::{Market, ScheduleRunStatus};
 use lumos_infra::kis::client::KisClient;
 use lumos_infra::providers::naver_finance::NaverFinanceClient;
 use lumos_infra::providers::naver_news::NaverNewsClient;
@@ -27,6 +30,12 @@ const TICK_SECS: u64 = 30;
 const SLOT_WINDOW_SECS: i64 = 90;
 /// KIS 투자자 수급 조회 기본 일수
 const INVESTOR_FLOW_DAYS: u32 = 5;
+/// 시나리오 생성 후 결과 평가까지의 대기 일수
+const EVAL_DELAY_DAYS: i64 = 3;
+/// 1회 평가 배치 최대 건수
+const EVAL_BATCH_LIMIT: u32 = 200;
+/// 프롬프트 피드백에 요약할 최근 outcome 건수
+const OUTCOME_FEEDBACK_LIMIT: u32 = 10;
 
 pub struct Scheduler {
     schedule_repo: Arc<dyn ManagerScheduleRepository>,
@@ -35,10 +44,13 @@ pub struct Scheduler {
     symbol_repo: Arc<dyn SymbolRepository>,
     manager_repo: Arc<dyn ManagerRepository>,
     scenario_item_repo: Arc<dyn ScenarioItemRepository>,
+    evidence_repo: Arc<dyn EvidenceCardRepository>,
     order_plan_svc: Option<Arc<OrderPlanService>>,
     kis_client: Option<Arc<KisClient>>,
     naver_client: Arc<NaverFinanceClient>,
     news_client: Option<Arc<NaverNewsClient>>,
+    outcome_repo: Option<Arc<dyn ScenarioOutcomeRepository>>,
+    last_evaluation_date: tokio::sync::Mutex<Option<chrono::NaiveDate>>,
 }
 
 impl Scheduler {
@@ -49,6 +61,7 @@ impl Scheduler {
         symbol_repo: Arc<dyn SymbolRepository>,
         manager_repo: Arc<dyn ManagerRepository>,
         scenario_item_repo: Arc<dyn ScenarioItemRepository>,
+        evidence_repo: Arc<dyn EvidenceCardRepository>,
     ) -> Self {
         Self {
             schedule_repo,
@@ -57,11 +70,19 @@ impl Scheduler {
             symbol_repo,
             manager_repo,
             scenario_item_repo,
+            evidence_repo,
             order_plan_svc: None,
             kis_client: None,
             naver_client: Arc::new(NaverFinanceClient::new()),
             news_client: None,
+            outcome_repo: None,
+            last_evaluation_date: tokio::sync::Mutex::new(None),
         }
+    }
+
+    pub fn with_outcome_repo(mut self, repo: Arc<dyn ScenarioOutcomeRepository>) -> Self {
+        self.outcome_repo = Some(repo);
+        self
     }
 
     pub fn with_kis_client(mut self, client: Arc<KisClient>) -> Self {
@@ -87,6 +108,23 @@ impl Scheduler {
             if let Err(e) = self.tick(now).await {
                 tracing::error!("scheduler tick error: {e:?}");
             }
+            // 하루 1회 시나리오 결과 평가 (자기진화).
+            self.maybe_run_daily_evaluation(now).await;
+        }
+    }
+
+    /// 날짜가 바뀌면 시나리오 결과 평가를 1회 실행한다.
+    async fn maybe_run_daily_evaluation(&self, now: DateTime<Utc>) {
+        let today = now.date_naive();
+        {
+            let mut last = self.last_evaluation_date.lock().await;
+            if *last == Some(today) {
+                return;
+            }
+            *last = Some(today);
+        }
+        if let Err(e) = self.evaluate_outcomes(now).await {
+            tracing::error!("scenario outcome evaluation failed: {e:?}");
         }
     }
 
@@ -112,47 +150,19 @@ impl Scheduler {
             let slots = self.schedule_repo.find_slots(sched.id).await?;
             for slot in slots.iter().filter(|s| s.enabled && s.time_of_day == aligned) {
                 let scheduled_for = slot_utc_time(&sched.market, now, aligned);
-
-                if slot.run_scenario {
-                    self.maybe_run(
-                        sched.manager_id,
-                        slot.id,
-                        RunType::Scenario,
-                        scheduled_for,
-                    )
-                    .await;
-                }
-
-                if slot.run_trade {
-                    self.maybe_run(
-                        sched.manager_id,
-                        slot.id,
-                        RunType::Trade,
-                        scheduled_for,
-                    )
-                    .await;
-                }
+                // 활성 슬롯은 시나리오 생성 → 매매를 하나의 사이클로 실행한다.
+                self.maybe_run(sched.manager_id, slot.id, scheduled_for).await;
             }
         }
         Ok(())
     }
 
-    async fn maybe_run(
-        &self,
-        manager_id: Uuid,
-        slot_id: Uuid,
-        run_type: RunType,
-        scheduled_for: DateTime<Utc>,
-    ) {
-        let type_str = match run_type {
-            RunType::Scenario => "scenario",
-            RunType::Trade => "trade",
-        };
-        let key = idempotency_key(manager_id, slot_id, scheduled_for, type_str);
+    async fn maybe_run(&self, manager_id: Uuid, slot_id: Uuid, scheduled_for: DateTime<Utc>) {
+        let key = idempotency_key(manager_id, slot_id, scheduled_for);
 
         let run = match self
             .run_repo
-            .create_if_not_exists(manager_id, slot_id, type_str, scheduled_for, &key)
+            .create_if_not_exists(manager_id, slot_id, scheduled_for, &key)
             .await
         {
             Ok(Some(r)) => r,
@@ -174,44 +184,58 @@ impl Scheduler {
             tracing::error!("failed to mark running {}: {e:?}", run.id);
         }
 
-        match run_type {
-            RunType::Scenario => {
-                self.run_scenario_job(manager_id, run.id, slot_id).await
-            }
-            RunType::Trade => {
-                self.run_trade_job(manager_id, run.id).await
-            }
+        // 하나의 사이클: 시나리오 생성 → 매매 순차 실행
+        let mut errors: Vec<String> = vec![];
+        if let Err(e) = self.run_scenario_job(manager_id, slot_id).await {
+            errors.push(format!("scenario: {e}"));
         }
+        if let Err(e) = self.run_trade_job(manager_id).await {
+            errors.push(format!("trade: {e}"));
+        }
+
+        let (status, msg) = if errors.is_empty() {
+            (ScheduleRunStatus::Success, None)
+        } else {
+            (ScheduleRunStatus::Failed, Some(errors.join("; ")))
+        };
+        let _ = self.run_repo.update_status(run.id, status, msg).await;
     }
 
-    async fn run_scenario_job(&self, manager_id: Uuid, run_id: Uuid, slot_id: Uuid) {
-        tracing::info!("running scenario job for manager {manager_id}, run {run_id}");
+    /// 시나리오 생성 단계. 사이클 상태는 호출자(maybe_run)가 관리한다.
+    async fn run_scenario_job(&self, manager_id: Uuid, slot_id: Uuid) -> Result<()> {
+        tracing::info!("running scenario job for manager {manager_id}");
 
-        // active symbols를 모두 조회해서 각 심볼별로 시나리오 생성
-        let symbols = match self.symbol_repo.find_active().await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("failed to load active symbols: {e:?}");
-                let _ = self
-                    .run_repo
-                    .update_status(run_id, ScheduleRunStatus::Failed, Some(e.to_string()))
-                    .await;
-                return;
+        // 매니저에 연결된 LLM 설정을 조회한다 (없으면 기본값으로 폴백).
+        let (model_provider, model_name) = match self.manager_repo.find_by_id(manager_id).await? {
+            Some(m) => (m.model_provider, m.model_name),
+            None => {
+                tracing::warn!("manager {manager_id} not found, using default model");
+                ("openai".to_string(), "gpt-4o-mini".to_string())
             }
         };
 
+        // active symbols를 모두 조회해서 각 심볼별로 시나리오 생성
+        let symbols = self.symbol_repo.find_active().await?;
+
         if symbols.is_empty() {
-            tracing::warn!("no active symbols, skipping scenario job");
-            let _ = self
-                .run_repo
-                .update_status(run_id, ScheduleRunStatus::Skipped, None)
-                .await;
-            return;
+            tracing::warn!("no active symbols, skipping scenario generation");
+            return Ok(());
         }
 
         let mut any_error: Option<String> = None;
         for symbol in &symbols {
-            let extra_evidence = self.collect_extra_evidence(&symbol.code, symbol.id).await;
+            // 수집한 evidence를 DB에 적재한다. 시나리오 생성은 DB에서 읽으므로
+            // (run_for_symbol 내부 find_for_symbol) 여기서는 빈 벡터를 넘겨 중복을 피한다.
+            let collected = self.collect_extra_evidence(&symbol.code, symbol.id).await;
+            tracing::debug!(
+                symbol = %symbol.code,
+                count = collected.len(),
+                "evidence persisted"
+            );
+
+            // 자기진화: 과거 평가 결과를 요약해 프롬프트 컨텍스트로 주입한다.
+            // (매번 재계산되는 요약이므로 DB에 적재하지 않고 in-memory로 전달)
+            let feedback = self.build_outcome_feedback(symbol.id).await;
 
             let result = self
                 .scenario_svc
@@ -219,11 +243,11 @@ impl Scheduler {
                     manager_id,
                     symbol.id,
                     Some(slot_id),
-                    "mock".to_string(),
-                    "mock-v1".to_string(),
+                    model_provider.clone(),
+                    model_name.clone(),
                     "v1".to_string(),
                     "0".to_string(),
-                    extra_evidence,
+                    feedback,
                     None,
                 )
                 .await;
@@ -242,53 +266,34 @@ impl Scheduler {
             }
         }
 
-        let final_status = if any_error.is_some() {
-            ScheduleRunStatus::Failed
-        } else {
-            ScheduleRunStatus::Success
-        };
-        let _ = self
-            .run_repo
-            .update_status(run_id, final_status, any_error)
-            .await;
+        match any_error {
+            Some(msg) => Err(anyhow::anyhow!(msg)),
+            None => Ok(()),
+        }
     }
 
-    async fn run_trade_job(&self, manager_id: Uuid, run_id: Uuid) {
-        tracing::info!("running trade job for manager {manager_id}, run {run_id}");
+    /// 매매 단계. 사이클 상태는 호출자(maybe_run)가 관리한다.
+    async fn run_trade_job(&self, manager_id: Uuid) -> Result<()> {
+        tracing::info!("running trade job for manager {manager_id}");
 
-        let manager = match self.manager_repo.find_by_id(manager_id).await {
-            Ok(Some(m)) => m,
-            Ok(None) => {
+        let manager = match self.manager_repo.find_by_id(manager_id).await? {
+            Some(m) => m,
+            None => {
                 tracing::warn!("manager {manager_id} not found, skipping trade job");
-                let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Skipped, None).await;
-                return;
-            }
-            Err(e) => {
-                tracing::error!("failed to load manager {manager_id}: {e}");
-                let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Failed, Some(e.to_string())).await;
-                return;
+                return Ok(());
             }
         };
 
         let Some(order_plan_svc) = &self.order_plan_svc else {
             tracing::warn!("order_plan_svc not configured, skipping trade job for manager {manager_id}");
-            let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Skipped, None).await;
-            return;
+            return Ok(());
         };
 
-        let items = match self.scenario_item_repo.find_pending_for_manager(manager_id).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("failed to load scenario items for {manager_id}: {e}");
-                let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Failed, Some(e.to_string())).await;
-                return;
-            }
-        };
+        let items = self.scenario_item_repo.find_pending_for_manager(manager_id).await?;
 
         if items.is_empty() {
             tracing::info!("no pending scenario items for manager {manager_id}, skipping trade job");
-            let _ = self.run_repo.update_status(run_id, ScheduleRunStatus::Skipped, None).await;
-            return;
+            return Ok(());
         }
 
         let mut any_error: Option<String> = None;
@@ -296,13 +301,38 @@ impl Scheduler {
             match order_plan_svc.create_from_scenario_item(manager_id, item.id).await {
                 Ok(plan) => {
                     tracing::info!("order plan {} created (risk: {})", plan.id, plan.risk_status);
-                    if manager.auto_trade_enabled {
-                        // symbol_code를 채워서 실행 (symbol_repo 주입 없이 MVP에서는 스킵)
-                        // TODO: symbol_repo 주입 후 symbol_code 해결
+                    // 실주문은 매니저의 auto_trade_enabled + 시스템 전역 ENABLE_LIVE_TRADING 둘 다 true일 때만.
+                    // 안전장치: 환경변수가 명시적으로 켜지지 않으면 주문을 내지 않는다.
+                    if manager.auto_trade_enabled && live_trading_enabled() {
+                        // 주문 실행 전에 symbol_repo로 symbol_code를 채운다.
+                        // (symbol_code는 DB에 저장되지 않고 실행 시점에 해석된다)
                         let mut plan_with_ctx = plan;
-                        plan_with_ctx.symbol_code = None; // execute_approved는 symbol_code 필수 → live-trading feature 없으면 no-op
-                        if let Err(e) = order_plan_svc.execute_approved(&plan_with_ctx, manager.broker_connection_id).await {
-                            tracing::warn!("execute_approved failed for plan {}: {e}", plan_with_ctx.id);
+                        match self.symbol_repo.find_by_id(plan_with_ctx.symbol_id).await {
+                            Ok(Some(symbol)) => {
+                                plan_with_ctx.symbol_code = Some(symbol.code);
+                                if let Err(e) = order_plan_svc
+                                    .execute_approved(&plan_with_ctx, manager.broker_connection_id)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "execute_approved failed for plan {}: {e}",
+                                        plan_with_ctx.id
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    "symbol {} not found, cannot execute plan {}",
+                                    plan_with_ctx.symbol_id,
+                                    plan_with_ctx.id
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "failed to resolve symbol for plan {}: {e}",
+                                    plan_with_ctx.id
+                                );
+                            }
                         }
                     }
                 }
@@ -313,12 +343,10 @@ impl Scheduler {
             }
         }
 
-        let final_status = if any_error.is_some() {
-            ScheduleRunStatus::Failed
-        } else {
-            ScheduleRunStatus::Success
-        };
-        let _ = self.run_repo.update_status(run_id, final_status, any_error).await;
+        match any_error {
+            Some(msg) => Err(anyhow::anyhow!(msg)),
+            None => Ok(()),
+        }
     }
 
     /// KIS 투자자 수급 + 네이버 컨센서스 + 뉴스를 best-effort로 수집해 EvidenceCard 반환
@@ -372,7 +400,122 @@ impl Scheduler {
             }
         }
 
-        cards
+        // 수집한 evidence를 DB에 적재한다. 저장된 카드(서버 생성 메타 포함)를 반환해
+        // 시나리오 생성에 그대로 사용하고, 이후 조회/이력에도 남도록 한다.
+        let mut persisted = Vec::with_capacity(cards.len());
+        for card in cards {
+            match self.evidence_repo.create(card.clone()).await {
+                Ok(saved) => persisted.push(saved),
+                Err(e) => {
+                    // 저장 실패해도 시나리오 생성은 진행 (best-effort): 메모리 카드 사용
+                    tracing::warn!("failed to persist evidence for {symbol_code}: {e}");
+                    persisted.push(card);
+                }
+            }
+        }
+        persisted
+    }
+
+    /// 과거 시나리오 평가 결과를 요약한 EvidenceCard를 만든다 (자기진화 피드백).
+    /// outcome_repo가 없거나 이력이 없으면 빈 벡터.
+    async fn build_outcome_feedback(&self, symbol_id: Uuid) -> Vec<EvidenceCard> {
+        let Some(outcome_repo) = &self.outcome_repo else {
+            return vec![];
+        };
+        match outcome_repo.find_recent_for_symbol(symbol_id, OUTCOME_FEEDBACK_LIMIT).await {
+            Ok(outcomes) => evidence_builder::from_scenario_outcomes(symbol_id, &outcomes)
+                .into_iter()
+                .collect(),
+            Err(e) => {
+                tracing::warn!("failed to load outcome feedback for {symbol_id}: {e}");
+                vec![]
+            }
+        }
+    }
+
+    /// 시나리오 결과 평가 (자기진화). target/stop이 설정된 만료 시나리오를
+    /// 현재가와 비교해 적중 여부를 scenario_outcomes에 기록한다.
+    ///
+    /// 한계: KIS historical 시세가 없어 "평가 시점 현재가" 기준으로 판정한다.
+    /// 기간 중 일시 도달 후 되돌린 경우는 포착하지 못한다 (보수적 평가).
+    async fn evaluate_outcomes(&self, now: DateTime<Utc>) -> Result<()> {
+        let Some(outcome_repo) = &self.outcome_repo else {
+            return Ok(());
+        };
+        let Some(kis) = &self.kis_client else {
+            tracing::debug!("kis_client 미설정 — outcome 평가 스킵");
+            return Ok(());
+        };
+
+        // 생성 후 EVAL_DELAY_DAYS 경과한 항목만 평가 대상.
+        let cutoff = now - chrono::Duration::days(EVAL_DELAY_DAYS);
+        let items = outcome_repo.find_unevaluated(cutoff, EVAL_BATCH_LIMIT).await?;
+        if items.is_empty() {
+            return Ok(());
+        }
+        tracing::info!("evaluating {} scenario outcomes", items.len());
+
+        for ev in &items {
+            let item = &ev.item;
+            let symbol = match self.symbol_repo.find_by_id(item.symbol_id).await {
+                Ok(Some(s)) => s,
+                _ => continue,
+            };
+
+            let quote = match symbol.region {
+                Region::Kr => kis.domestic_quote(&symbol.code).await,
+                Region::Us => kis.overseas_quote(&symbol.code, "NAS").await,
+            };
+            let price = match quote {
+                Ok(q) => q.last_price,
+                Err(e) => {
+                    tracing::warn!("quote failed for {}: {e}", symbol.code);
+                    continue;
+                }
+            };
+
+            let (target, stop) = match (item.target_price, item.stop_loss_price) {
+                (Some(t), Some(s)) => (t, s),
+                _ => continue,
+            };
+            // buy/sell 모두: target 방향 도달 우선, 그다음 stop.
+            let result = match item.action {
+                ScenarioAction::Buy => {
+                    if price >= target {
+                        OutcomeResult::TargetHit
+                    } else if price <= stop {
+                        OutcomeResult::StopHit
+                    } else {
+                        OutcomeResult::Expired
+                    }
+                }
+                ScenarioAction::Sell => {
+                    if price <= target {
+                        OutcomeResult::TargetHit
+                    } else if price >= stop {
+                        OutcomeResult::StopHit
+                    } else {
+                        OutcomeResult::Expired
+                    }
+                }
+                _ => OutcomeResult::Expired,
+            };
+
+            let outcome = ScenarioOutcome {
+                id: Uuid::new_v4(),
+                scenario_item_id: item.id,
+                symbol_id: item.symbol_id,
+                result,
+                evaluated_price: price,
+                base_price: None,
+                return_pct: None,
+                evaluated_at: now,
+            };
+            if let Err(e) = outcome_repo.create(outcome).await {
+                tracing::warn!("failed to record outcome for item {}: {e}", item.id);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -402,14 +545,22 @@ fn slot_utc_time(market: &Market, now: DateTime<Utc>, slot_time: NaiveTime) -> D
         .unwrap_or(now)
 }
 
-fn idempotency_key(
-    manager_id: Uuid,
-    slot_id: Uuid,
-    scheduled_for: DateTime<Utc>,
-    run_type: &str,
-) -> String {
+/// 실거래 주문 실행을 전역으로 켜는 안전 스위치.
+/// ENABLE_LIVE_TRADING=true (또는 1)일 때만 실제 주문을 낸다.
+fn live_trading_enabled() -> bool {
+    matches!(
+        std::env::var("ENABLE_LIVE_TRADING")
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str(),
+        "true" | "1" | "yes"
+    )
+}
+
+fn idempotency_key(manager_id: Uuid, slot_id: Uuid, scheduled_for: DateTime<Utc>) -> String {
     format!(
-        "{manager_id}:{slot_id}:{run_type}:{}",
+        "{manager_id}:{slot_id}:{}",
         scheduled_for.format("%Y%m%dT%H%M")
     )
 }
@@ -436,18 +587,19 @@ mod tests {
         let manager_id = Uuid::nil();
         let slot_id = Uuid::nil();
         let dt = Utc.with_ymd_and_hms(2024, 1, 2, 9, 30, 0).unwrap();
-        let k1 = idempotency_key(manager_id, slot_id, dt, "scenario");
-        let k2 = idempotency_key(manager_id, slot_id, dt, "scenario");
+        let k1 = idempotency_key(manager_id, slot_id, dt);
+        let k2 = idempotency_key(manager_id, slot_id, dt);
         assert_eq!(k1, k2);
     }
 
     #[test]
-    fn idempotency_key_differs_by_type() {
+    fn idempotency_key_differs_by_time() {
         let manager_id = Uuid::nil();
         let slot_id = Uuid::nil();
-        let dt = Utc.with_ymd_and_hms(2024, 1, 2, 9, 30, 0).unwrap();
-        let k1 = idempotency_key(manager_id, slot_id, dt, "scenario");
-        let k2 = idempotency_key(manager_id, slot_id, dt, "trade");
+        let dt1 = Utc.with_ymd_and_hms(2024, 1, 2, 9, 30, 0).unwrap();
+        let dt2 = Utc.with_ymd_and_hms(2024, 1, 2, 9, 35, 0).unwrap();
+        let k1 = idempotency_key(manager_id, slot_id, dt1);
+        let k2 = idempotency_key(manager_id, slot_id, dt2);
         assert_ne!(k1, k2);
     }
 

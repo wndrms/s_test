@@ -36,7 +36,7 @@ RUN mkdir -p .cargo && \
     echo '' >> .cargo/config.toml && \
     echo '[source.vendored-sources]' >> .cargo/config.toml && \
     echo 'directory = "vendor"' >> .cargo/config.toml && \
-    cargo build --release --offline -p lumos-api -p lumos-worker
+    cargo build --release --offline --features live-trading -p lumos-api -p lumos-worker
 
 # ── Stage 2: api runtime ──────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS api

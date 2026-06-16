@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use lumos_domain::model::symbol::{Currency, Region, Symbol};
+use lumos_domain::model::symbol::{Region, Symbol};
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;

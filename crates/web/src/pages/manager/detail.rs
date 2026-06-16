@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::{components::Outlet, hooks::use_params_map};
 
-use crate::api::client::get_manager;
-use crate::api::types::ManagerDto;
+use crate::api::client::{get_manager, list_holdings};
+use crate::api::types::{format_krw, ManagerDto};
 use crate::components::badge::{ModeBadge, StatusBadge};
 use crate::components::layout::AppLayout;
 
@@ -78,6 +78,13 @@ pub fn ManagerDetailPage() -> impl IntoView {
 fn ManagerDetailInner(manager: ManagerDto) -> impl IntoView {
     let id = manager.id;
     let active_tab = RwSignal::new(Tab::Scenario);
+    let base_currency = manager.base_currency.clone();
+    let initial_capital_val = manager.initial_capital_val();
+
+    // 보유 종목을 조회해 순자산(초기자본 + 미실현손익)과 종목 수를 계산한다.
+    let holdings = LocalResource::new(move || async move {
+        list_holdings(id).await.unwrap_or_default()
+    });
 
     let tab_href = move |tab: Tab| format!("/managers/{id}{}", tab.path_suffix());
 
@@ -99,22 +106,43 @@ fn ManagerDetailInner(manager: ManagerDto) -> impl IntoView {
                 </div>
 
                 <div class="manager-stats">
-                    <div class="stat-item">
-                        <div class="stat-label">"순자산"</div>
-                        <div class="stat-value">"— KRW"</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">"일 손익"</div>
-                        <div class="stat-value">"— %"</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">"보유 종목"</div>
-                        <div class="stat-value">"—"</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">"오늘 거래"</div>
-                        <div class="stat-value">"—"</div>
-                    </div>
+                    {move || {
+                        let cur = base_currency.clone();
+                        let list = holdings.get().map(|w| (*w).clone());
+                        let (net_worth, pnl_sum, count) = match &list {
+                            Some(hs) => {
+                                let pnl: f64 = hs.iter().map(|h| h.unrealized_pnl_val()).sum();
+                                // 순자산 ≈ 초기자본 + 미실현손익 (모의/근사)
+                                (initial_capital_val + pnl, pnl, hs.len())
+                            }
+                            None => (initial_capital_val, 0.0, 0),
+                        };
+                        let pnl_pct = if initial_capital_val > 0.0 {
+                            pnl_sum / initial_capital_val * 100.0
+                        } else {
+                            0.0
+                        };
+                        let pnl_cls = if pnl_sum >= 0.0 { "stat-value text-green" } else { "stat-value text-red" };
+                        let sign = if pnl_sum >= 0.0 { "+" } else { "" };
+                        view! {
+                            <div class="stat-item">
+                                <div class="stat-label">"순자산"</div>
+                                <div class="stat-value">{format!("{:.0} {}", net_worth, cur)}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-label">"평가 손익"</div>
+                                <div class=pnl_cls>{format!("{}{:.2}%", sign, pnl_pct)}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-label">"보유 종목"</div>
+                                <div class="stat-value">{count.to_string()}</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-label">"초기 자본"</div>
+                                <div class="stat-value">{format_krw(initial_capital_val)}</div>
+                            </div>
+                        }
+                    }}
                 </div>
             </div>
 
@@ -146,13 +174,16 @@ fn ManagerDetailInner(manager: ManagerDto) -> impl IntoView {
 fn AutoTradeToggle(manager_id: uuid::Uuid, enabled: bool) -> impl IntoView {
     let on = RwSignal::new(enabled);
     let pending = RwSignal::new(false);
+    let error = RwSignal::new(None::<String>);
 
     view! {
         <div style="display:flex;align-items:center;gap:12px;">
             <span class="text-muted" style="font-size:0.85rem;">"자동매매"</span>
+            {move || error.get().map(|e| view! {
+                <span class="text-red" style="font-size:0.75rem;">{e}</span>
+            })}
             <label
                 class="toggle"
-                data-tip=move || if on.get() { "자동매매 ON" } else { "자동매매 OFF" }
                 style=move || if pending.get() { "opacity:0.6;pointer-events:none;" } else { "" }
             >
                 <input
@@ -162,13 +193,27 @@ fn AutoTradeToggle(manager_id: uuid::Uuid, enabled: bool) -> impl IntoView {
                         let checked = event_target_checked(&e);
                         on.set(checked);
                         pending.set(true);
+                        error.set(None);
                         leptos::task::spawn_local(async move {
                             let url = format!("/api/managers/{}/auto-trade", manager_id);
-                            let _ = gloo_net::http::Request::post(&url)
+                            let result = gloo_net::http::Request::post(&url)
                                 .json(&serde_json::json!({"enabled": checked}))
-                                .unwrap()
-                                .send()
-                                .await;
+                                .map(|req| async move { req.send().await })
+                                .map_err(|e| e.to_string());
+                            let ok = match result {
+                                Err(e) => { error.set(Some(e)); false }
+                                Ok(fut) => match fut.await {
+                                    Err(e) => { error.set(Some(e.to_string())); false }
+                                    Ok(resp) if !resp.ok() => {
+                                        error.set(Some(format!("요청 실패 ({})", resp.status())));
+                                        false
+                                    }
+                                    Ok(_) => true,
+                                }
+                            };
+                            if !ok {
+                                on.set(!checked);
+                            }
                             pending.set(false);
                         });
                     }

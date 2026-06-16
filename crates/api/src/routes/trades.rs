@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use lumos_app::error::AppError;
+use lumos_app::repo::trade_cycle::FillQuery;
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -47,11 +48,18 @@ async fn list_trades(
     Query(query): Query<TradesQuery>,
 ) -> ApiResult<Json<Vec<TradeResponse>>> {
     let limit = query.limit.unwrap_or(50).min(200);
-    let side = query.side.as_deref();
 
     let fills = state
-        .trades_repo
-        .find_by_manager(manager_id, query.from, query.to, side, limit)
+        .trade_cycle_repo
+        .list_fills(
+            manager_id,
+            FillQuery {
+                from: query.from,
+                to: query.to,
+                side: query.side.clone(),
+                limit,
+            },
+        )
         .await
         .map_err(|e| ApiError::from(AppError::Internal(e)))?;
 

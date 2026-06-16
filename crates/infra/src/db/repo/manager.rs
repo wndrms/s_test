@@ -32,6 +32,9 @@ struct ManagerRow {
     initial_capital: Decimal,
     auto_trade_enabled: bool,
     status: String,
+    llm_key_id: Option<Uuid>,
+    model_provider: String,
+    model_name: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -62,6 +65,9 @@ impl From<ManagerRow> for Manager {
                 "deleted" => ManagerStatus::Deleted,
                 _ => ManagerStatus::Active,
             },
+            llm_key_id: r.llm_key_id,
+            model_provider: r.model_provider,
+            model_name: r.model_name,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -74,6 +80,7 @@ impl ManagerRepository for PgManagerRepository {
         let row: Option<ManagerRow> = sqlx::query_as::<_, ManagerRow>(
             r#"SELECT id, user_id, broker_connection_id, name, mode, region,
                       base_currency, initial_capital, auto_trade_enabled, status,
+                      llm_key_id, model_provider, model_name,
                       created_at, updated_at
                FROM managers WHERE id = $1"#,
         )
@@ -87,6 +94,7 @@ impl ManagerRepository for PgManagerRepository {
         let rows: Vec<ManagerRow> = sqlx::query_as::<_, ManagerRow>(
             r#"SELECT id, user_id, broker_connection_id, name, mode, region,
                       base_currency, initial_capital, auto_trade_enabled, status,
+                      llm_key_id, model_provider, model_name,
                       created_at, updated_at
                FROM managers WHERE user_id = $1 AND status != 'deleted' ORDER BY created_at DESC"#,
         )
@@ -100,6 +108,7 @@ impl ManagerRepository for PgManagerRepository {
         let rows: Vec<ManagerRow> = sqlx::query_as::<_, ManagerRow>(
             r#"SELECT id, user_id, broker_connection_id, name, mode, region,
                       base_currency, initial_capital, auto_trade_enabled, status,
+                      llm_key_id, model_provider, model_name,
                       created_at, updated_at
                FROM managers WHERE status = 'active' ORDER BY created_at"#,
         )
@@ -111,10 +120,12 @@ impl ManagerRepository for PgManagerRepository {
     async fn create(&self, input: CreateManagerInput) -> Result<Manager> {
         let row: ManagerRow = sqlx::query_as::<_, ManagerRow>(
             r#"INSERT INTO managers
-               (user_id, broker_connection_id, name, mode, region, base_currency, initial_capital)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               (user_id, broker_connection_id, name, mode, region, base_currency, initial_capital,
+                llm_key_id, model_provider, model_name)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                RETURNING id, user_id, broker_connection_id, name, mode, region,
                          base_currency, initial_capital, auto_trade_enabled, status,
+                         llm_key_id, model_provider, model_name,
                          created_at, updated_at"#,
         )
         .bind(input.user_id)
@@ -124,6 +135,9 @@ impl ManagerRepository for PgManagerRepository {
         .bind(input.region.to_string())
         .bind(input.base_currency.to_string())
         .bind(input.initial_capital)
+        .bind(input.llm_key_id)
+        .bind(input.model_provider)
+        .bind(input.model_name)
         .fetch_one(&self.pool)
         .await?;
         Ok(row.into())
@@ -140,6 +154,7 @@ impl ManagerRepository for PgManagerRepository {
                WHERE id = $1
                RETURNING id, user_id, broker_connection_id, name, mode, region,
                          base_currency, initial_capital, auto_trade_enabled, status,
+                         llm_key_id, model_provider, model_name,
                          created_at, updated_at"#,
         )
         .bind(id)
@@ -155,6 +170,7 @@ impl ManagerRepository for PgManagerRepository {
                WHERE id = $1
                RETURNING id, user_id, broker_connection_id, name, mode, region,
                          base_currency, initial_capital, auto_trade_enabled, status,
+                         llm_key_id, model_provider, model_name,
                          created_at, updated_at"#,
         )
         .bind(id)
@@ -178,7 +194,6 @@ impl PgRiskPolicyRepository {
 #[derive(FromRow)]
 struct RiskPolicyRow {
     manager_id: Uuid,
-    max_position_pct: Decimal,
     max_single_order_amount_krw: Decimal,
     max_daily_loss_pct: Decimal,
     max_daily_trade_count: i32,
@@ -196,7 +211,6 @@ impl From<RiskPolicyRow> for RiskPolicy {
     fn from(r: RiskPolicyRow) -> Self {
         Self {
             manager_id: r.manager_id,
-            max_position_pct: r.max_position_pct,
             max_single_order_amount_krw: r.max_single_order_amount_krw,
             max_daily_loss_pct: r.max_daily_loss_pct,
             max_daily_trade_count: r.max_daily_trade_count,
@@ -216,7 +230,7 @@ impl From<RiskPolicyRow> for RiskPolicy {
 impl RiskPolicyRepository for PgRiskPolicyRepository {
     async fn find_by_manager(&self, manager_id: Uuid) -> Result<Option<RiskPolicy>> {
         let row: Option<RiskPolicyRow> = sqlx::query_as::<_, RiskPolicyRow>(
-            r#"SELECT manager_id, max_position_pct, max_single_order_amount_krw,
+            r#"SELECT manager_id, max_single_order_amount_krw,
                       max_daily_loss_pct, max_daily_trade_count, allow_market_order,
                       allow_pre_market, allow_after_hours, require_fresh_quote_seconds,
                       require_fresh_account_seconds, min_ai_confidence_pct, min_evidence_count,
@@ -232,13 +246,12 @@ impl RiskPolicyRepository for PgRiskPolicyRepository {
     async fn upsert(&self, p: RiskPolicy) -> Result<RiskPolicy> {
         let row: RiskPolicyRow = sqlx::query_as::<_, RiskPolicyRow>(
             r#"INSERT INTO risk_policies
-               (manager_id, max_position_pct, max_single_order_amount_krw,
+               (manager_id, max_single_order_amount_krw,
                 max_daily_loss_pct, max_daily_trade_count, allow_market_order,
                 allow_pre_market, allow_after_hours, require_fresh_quote_seconds,
                 require_fresh_account_seconds, min_ai_confidence_pct, min_evidence_count)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
                ON CONFLICT (manager_id) DO UPDATE SET
-                 max_position_pct = EXCLUDED.max_position_pct,
                  max_single_order_amount_krw = EXCLUDED.max_single_order_amount_krw,
                  max_daily_loss_pct = EXCLUDED.max_daily_loss_pct,
                  max_daily_trade_count = EXCLUDED.max_daily_trade_count,
@@ -250,14 +263,13 @@ impl RiskPolicyRepository for PgRiskPolicyRepository {
                  min_ai_confidence_pct = EXCLUDED.min_ai_confidence_pct,
                  min_evidence_count = EXCLUDED.min_evidence_count,
                  updated_at = now()
-               RETURNING manager_id, max_position_pct, max_single_order_amount_krw,
+               RETURNING manager_id, max_single_order_amount_krw,
                          max_daily_loss_pct, max_daily_trade_count, allow_market_order,
                          allow_pre_market, allow_after_hours, require_fresh_quote_seconds,
                          require_fresh_account_seconds, min_ai_confidence_pct, min_evidence_count,
                          updated_at"#,
         )
         .bind(p.manager_id)
-        .bind(p.max_position_pct)
         .bind(p.max_single_order_amount_krw)
         .bind(p.max_daily_loss_pct)
         .bind(p.max_daily_trade_count)

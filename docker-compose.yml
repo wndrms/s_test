@@ -28,6 +28,7 @@ services:
     environment:
       LISTEN_ADDR: "0.0.0.0:5000"
       DATABASE_URL: "postgres://postgres:postgres@db:5432/lumos"
+      RUST_LOG: "${RUST_LOG:-info}"
     ports:
       - "5000:5000"
     depends_on:
@@ -43,6 +44,9 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: "postgres://postgres:postgres@db:5432/lumos"
+      RUST_LOG: "${RUST_LOG:-info}"
+      # 실거래 안전 스위치. 기본 false — true/1로 명시할 때만 실제 주문 실행.
+      ENABLE_LIVE_TRADING: "${ENABLE_LIVE_TRADING:-false}"
     depends_on:
       db:
         condition: service_healthy

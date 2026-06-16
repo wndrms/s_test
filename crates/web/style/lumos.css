@@ -404,7 +404,7 @@ h3 { font-size: 1rem;    font-weight: 600; }
 /* ── Schedule Grid ────────────────────────────────────────── */
 .schedule-grid {
   display: grid;
-  grid-template-columns: auto repeat(2, 80px);
+  grid-template-columns: auto 80px;
   gap: 1px;
   background: var(--border);
   border-radius: var(--r-md);

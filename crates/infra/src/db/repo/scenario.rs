@@ -6,12 +6,12 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use lumos_app::repo::scenario::{
-    CreateScenarioItemInput, CreateScenarioRunInput, EvidenceCardRepository,
-    ScenarioItemRepository, ScenarioRunRepository,
+    CreateScenarioItemInput, CreateScenarioRunInput, EvaluableItem, EvidenceCardRepository,
+    ScenarioItemRepository, ScenarioOutcomeRepository, ScenarioRunRepository,
 };
 use lumos_domain::model::scenario::{
-    EvidenceCard, EvidenceSourceType, ScenarioAction, ScenarioItem, ScenarioRun, ScenarioStatus,
-    ScenarioType, SentimentLabel,
+    EvidenceCard, EvidenceSourceType, OutcomeResult, ScenarioAction, ScenarioItem, ScenarioOutcome,
+    ScenarioRun, ScenarioStatus, ScenarioType, SentimentLabel,
 };
 
 // ─── Evidence Card ───────────────────────────────────────────────────────────
@@ -454,6 +454,170 @@ impl ScenarioItemRepository for PgScenarioItemRepository {
                LIMIT 20"#,
         )
         .bind(manager_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+}
+
+// ─── Scenario Outcome (자기진화) ───────────────────────────────────────────────
+
+pub struct PgScenarioOutcomeRepository {
+    pool: PgPool,
+}
+
+impl PgScenarioOutcomeRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+fn parse_outcome_result(s: &str) -> OutcomeResult {
+    match s {
+        "target_hit" => OutcomeResult::TargetHit,
+        "stop_hit" => OutcomeResult::StopHit,
+        _ => OutcomeResult::Expired,
+    }
+}
+
+#[derive(FromRow)]
+struct EvaluableItemRow {
+    id: Uuid,
+    scenario_run_id: Uuid,
+    analysis_report_id: Option<Uuid>,
+    symbol_id: Uuid,
+    scenario_type: String,
+    action: String,
+    probability_pct: Decimal,
+    target_price: Option<Decimal>,
+    stop_loss_price: Option<Decimal>,
+    condition_text: String,
+    strategy_text: String,
+    risk_text: Option<String>,
+    rank_order: i32,
+    run_created_at: DateTime<Utc>,
+}
+
+impl From<EvaluableItemRow> for EvaluableItem {
+    fn from(r: EvaluableItemRow) -> Self {
+        let run_created_at = r.run_created_at;
+        EvaluableItem {
+            item: ScenarioItem {
+                id: r.id,
+                scenario_run_id: r.scenario_run_id,
+                analysis_report_id: r.analysis_report_id,
+                symbol_id: r.symbol_id,
+                scenario_type: parse_scenario_type(&r.scenario_type),
+                action: parse_scenario_action(&r.action),
+                probability_pct: r.probability_pct,
+                target_price: r.target_price,
+                stop_loss_price: r.stop_loss_price,
+                condition_text: r.condition_text,
+                strategy_text: r.strategy_text,
+                risk_text: r.risk_text,
+                rank_order: r.rank_order,
+            },
+            run_created_at,
+        }
+    }
+}
+
+#[derive(FromRow)]
+struct ScenarioOutcomeRow {
+    id: Uuid,
+    scenario_item_id: Uuid,
+    symbol_id: Uuid,
+    result: String,
+    evaluated_price: Decimal,
+    base_price: Option<Decimal>,
+    return_pct: Option<Decimal>,
+    evaluated_at: DateTime<Utc>,
+}
+
+impl From<ScenarioOutcomeRow> for ScenarioOutcome {
+    fn from(r: ScenarioOutcomeRow) -> Self {
+        Self {
+            id: r.id,
+            scenario_item_id: r.scenario_item_id,
+            symbol_id: r.symbol_id,
+            result: parse_outcome_result(&r.result),
+            evaluated_price: r.evaluated_price,
+            base_price: r.base_price,
+            return_pct: r.return_pct,
+            evaluated_at: r.evaluated_at,
+        }
+    }
+}
+
+#[async_trait]
+impl ScenarioOutcomeRepository for PgScenarioOutcomeRepository {
+    async fn find_unevaluated(
+        &self,
+        created_before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<EvaluableItem>> {
+        // 아직 outcome이 없고, target/stop이 있으며, Buy/Sell 액션인 항목.
+        let rows: Vec<EvaluableItemRow> = sqlx::query_as::<_, EvaluableItemRow>(
+            r#"SELECT si.id, si.scenario_run_id, si.analysis_report_id, si.symbol_id,
+                      si.scenario_type, si.action, si.probability_pct, si.target_price,
+                      si.stop_loss_price, si.condition_text, si.strategy_text, si.risk_text,
+                      si.rank_order, sr.created_at AS run_created_at
+               FROM scenario_items si
+               JOIN scenario_runs sr ON sr.id = si.scenario_run_id
+               LEFT JOIN scenario_outcomes so ON so.scenario_item_id = si.id
+               WHERE so.id IS NULL
+                 AND sr.created_at < $1
+                 AND si.action IN ('buy','sell')
+                 AND si.target_price IS NOT NULL
+                 AND si.stop_loss_price IS NOT NULL
+               ORDER BY sr.created_at
+               LIMIT $2"#,
+        )
+        .bind(created_before)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn create(&self, outcome: ScenarioOutcome) -> Result<ScenarioOutcome> {
+        let row: ScenarioOutcomeRow = sqlx::query_as::<_, ScenarioOutcomeRow>(
+            r#"INSERT INTO scenario_outcomes
+               (id, scenario_item_id, symbol_id, result, evaluated_price, base_price,
+                return_pct, evaluated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+               ON CONFLICT (scenario_item_id) DO NOTHING
+               RETURNING id, scenario_item_id, symbol_id, result, evaluated_price,
+                         base_price, return_pct, evaluated_at"#,
+        )
+        .bind(outcome.id)
+        .bind(outcome.scenario_item_id)
+        .bind(outcome.symbol_id)
+        .bind(outcome.result.as_str())
+        .bind(outcome.evaluated_price)
+        .bind(outcome.base_price)
+        .bind(outcome.return_pct)
+        .bind(outcome.evaluated_at)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.into())
+    }
+
+    async fn find_recent_for_symbol(
+        &self,
+        symbol_id: Uuid,
+        limit: u32,
+    ) -> Result<Vec<ScenarioOutcome>> {
+        let rows: Vec<ScenarioOutcomeRow> = sqlx::query_as::<_, ScenarioOutcomeRow>(
+            r#"SELECT id, scenario_item_id, symbol_id, result, evaluated_price,
+                      base_price, return_pct, evaluated_at
+               FROM scenario_outcomes
+               WHERE symbol_id = $1
+               ORDER BY evaluated_at DESC
+               LIMIT $2"#,
+        )
+        .bind(symbol_id)
+        .bind(limit as i64)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())

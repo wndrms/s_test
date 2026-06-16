@@ -43,6 +43,22 @@ pub struct BrokerPosition {
     pub unrealized_pnl: Decimal,
 }
 
+/// 특정 시점의 포트폴리오 스냅샷. portfolio_snapshots 테이블과 매핑된다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortfolioSnapshot {
+    /// 총 평가액 (현금 + 보유 평가액)
+    pub equity: Decimal,
+    pub cash: Decimal,
+    /// 보유 종목 평가액 합계
+    pub invested_value: Decimal,
+    /// 보유 종목 평가손익 합계
+    pub unrealized_pnl: Decimal,
+    /// 누적 실현손익
+    pub realized_pnl: Decimal,
+    pub currency: Currency,
+    pub as_of: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuyingPowerRequest {
     pub symbol_code: String,

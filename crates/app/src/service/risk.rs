@@ -198,27 +198,7 @@ pub fn evaluate(policy: &RiskPolicy, ctx: &OrderContext) -> RiskCheckResult {
         Some("포트폴리오 총액을 알 수 없습니다".to_string())
     );
 
-    // 13. 매수 시 포지션 비중 초과 여부
-    if ctx.side == OrderSide::Buy {
-        let new_position = ctx.current_position_amount_krw + ctx.estimated_amount_krw;
-        let new_pct = (new_position / ctx.portfolio_total_krw) * dec!(100);
-        check!(
-            "max_position_pct",
-            new_pct <= policy.max_position_pct,
-            Some(format!(
-                "종목 비중 초과: {:.2}% (최대: {}%)",
-                new_pct, policy.max_position_pct
-            ))
-        );
-    } else {
-        checks.push(RiskCheck {
-            name: "max_position_pct".to_string(),
-            passed: true,
-            detail: Some("매도 — 비중 체크 해당 없음".to_string()),
-        });
-    }
-
-    // 14. 매도 시 보유 수량 충분 여부 (예상 금액 > 0 이면 pass, 실제 수량은 상위 레이어에서 확인)
+    // 매도 시 보유 수량 충분 여부 (예상 금액 > 0 이면 pass, 실제 수량은 상위 레이어에서 확인)
     check!(
         "sell_has_position",
         ctx.side == OrderSide::Buy || ctx.current_position_amount_krw > Decimal::ZERO,

@@ -1,3 +1,7 @@
+// KIS Open API DTO. 필드명은 KIS 스펙(SCREAMING_CASE)을 그대로 따르며,
+// 일부 필드는 역직렬화 문서화 목적상 코드에서 직접 읽지 않을 수 있다.
+#![allow(non_snake_case, dead_code)]
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -10,6 +14,14 @@ pub struct TokenResponse {
     pub token_type: String,
     pub expires_in: i64,
     pub access_token_token_expired: String,
+}
+
+// ── Hashkey ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HashkeyResponse {
+    #[serde(rename = "HASH")]
+    pub hash: String,
 }
 
 // ── Domestic Quote (FHKST01010100) ────────────────────────────────────────────

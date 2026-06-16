@@ -55,8 +55,8 @@ fn ManagerCard(manager: ManagerDto) -> impl IntoView {
                     <div class="manager-card-account text-muted">{manager.region.clone()}</div>
                 </div>
                 <div class="manager-card-equity">
-                    <div class="equity-value">"—"</div>
-                    <div class="equity-change text-muted">"잔고 로딩 중"</div>
+                    <div class="equity-value">{manager.initial_capital_str()}</div>
+                    <div class="equity-change text-muted">"초기 자본"</div>
                 </div>
             </div>
 

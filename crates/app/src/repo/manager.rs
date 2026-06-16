@@ -14,6 +14,10 @@ pub struct CreateManagerInput {
     pub region: Region,
     pub base_currency: Currency,
     pub initial_capital: rust_decimal::Decimal,
+    /// 연결할 LLM 키 ID. None이면 서버 기본 LLM 사용.
+    pub llm_key_id: Option<Uuid>,
+    pub model_provider: String,
+    pub model_name: String,
 }
 
 #[async_trait]

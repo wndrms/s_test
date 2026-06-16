@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use lumos_app::repo::broker_connection::BrokerConnectionRepository;
+use lumos_app::repo::broker_connection::{BrokerConnectionRepository, BrokerCredentials};
 use lumos_domain::model::broker::{BrokerConnection, BrokerEnvironment};
 
 pub struct PgBrokerConnectionRepository {
@@ -49,6 +49,30 @@ impl From<BrokerConnectionRow> for BrokerConnection {
 
 const SELECT_COLS: &str = "id, user_id, broker, environment, account_no_masked, verified_at, created_at, updated_at";
 
+#[derive(FromRow)]
+struct BrokerCredentialsRow {
+    id: Uuid,
+    environment: String,
+    account_no_encrypted: Vec<u8>,
+    app_key_secret_id: Uuid,
+    app_secret_secret_id: Uuid,
+}
+
+impl From<BrokerCredentialsRow> for BrokerCredentials {
+    fn from(r: BrokerCredentialsRow) -> Self {
+        Self {
+            broker_connection_id: r.id,
+            environment: match r.environment.as_str() {
+                "real" => BrokerEnvironment::Real,
+                _ => BrokerEnvironment::Paper,
+            },
+            account_no_encrypted: r.account_no_encrypted,
+            app_key_secret_id: r.app_key_secret_id,
+            app_secret_secret_id: r.app_secret_secret_id,
+        }
+    }
+}
+
 #[async_trait]
 impl BrokerConnectionRepository for PgBrokerConnectionRepository {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<BrokerConnection>> {
@@ -69,6 +93,17 @@ impl BrokerConnectionRepository for PgBrokerConnectionRepository {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn find_credentials(&self, id: Uuid) -> Result<Option<BrokerCredentials>> {
+        let row: Option<BrokerCredentialsRow> = sqlx::query_as::<_, BrokerCredentialsRow>(
+            r#"SELECT id, environment, account_no_encrypted, app_key_secret_id, app_secret_secret_id
+               FROM broker_connections WHERE id = $1"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(Into::into))
     }
 
     async fn create(

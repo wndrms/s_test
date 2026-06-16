@@ -102,7 +102,7 @@ pub trait LlmProvider: Send + Sync {
     async fn analyze_fundamentals(
         &self,
         symbol_code: &str,
-        base_price: &str,
+        _base_price: &str,
         cards: &[EvidenceCard],
     ) -> Result<FundamentalAnalysis> {
         // 기본: 단순 evidence 요약으로 대체 (mock/간단한 구현용)
@@ -189,7 +189,7 @@ pub trait LlmProvider: Send + Sync {
     async fn critic_review(
         &self,
         _input: &ScenarioPromptInput,
-        draft: &StrategyDraft,
+        _draft: &StrategyDraft,
         _fundamental: &FundamentalAnalysis,
         news: &NewsEventAnalysis,
     ) -> Result<CriticReview> {

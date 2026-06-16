@@ -28,6 +28,7 @@ struct DartListResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // DART 응답 스키마 문서화: form_no는 현재 직접 읽지 않음
 struct DartFilingItem {
     corp_name: String,
     report_nm: String,

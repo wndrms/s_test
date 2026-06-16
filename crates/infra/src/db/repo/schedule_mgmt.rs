@@ -66,22 +66,16 @@ impl ManagerScheduleWriteRepository for PgManagerScheduleWriteRepository {
         &self,
         schedule_id: Uuid,
         time_of_day: NaiveTime,
-        run_scenario: bool,
-        run_trade: bool,
         enabled: bool,
     ) -> Result<()> {
         sqlx::query(
-            r#"INSERT INTO schedule_slots (schedule_id, time_of_day, run_scenario, run_trade, enabled)
-               VALUES ($1, $2, $3, $4, $5)
+            r#"INSERT INTO schedule_slots (schedule_id, time_of_day, enabled)
+               VALUES ($1, $2, $3)
                ON CONFLICT (schedule_id, time_of_day) DO UPDATE SET
-                 run_scenario = EXCLUDED.run_scenario,
-                 run_trade = EXCLUDED.run_trade,
                  enabled = EXCLUDED.enabled"#,
         )
         .bind(schedule_id)
         .bind(time_of_day)
-        .bind(run_scenario)
-        .bind(run_trade)
         .bind(enabled)
         .execute(&self.pool)
         .await?;

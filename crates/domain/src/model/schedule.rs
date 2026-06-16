@@ -34,13 +34,6 @@ impl Market {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RunType {
-    Scenario,
-    Trade,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum ScheduleRunStatus {
     Pending,
     Running,
@@ -65,8 +58,6 @@ pub struct ScheduleSlot {
     pub id: Uuid,
     pub schedule_id: Uuid,
     pub time_of_day: NaiveTime,
-    pub run_scenario: bool,
-    pub run_trade: bool,
     pub enabled: bool,
 }
 
@@ -75,7 +66,6 @@ pub struct ScheduleRun {
     pub id: Uuid,
     pub manager_id: Uuid,
     pub schedule_slot_id: Uuid,
-    pub run_type: RunType,
     pub scheduled_for: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,

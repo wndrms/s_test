@@ -41,6 +41,10 @@ pub struct Manager {
     pub initial_capital: Decimal,
     pub auto_trade_enabled: bool,
     pub status: ManagerStatus,
+    /// 매니저에 연결된 LLM 키 ID. None이면 서버 기본 LLM(환경변수) 사용.
+    pub llm_key_id: Option<Uuid>,
+    pub model_provider: String,
+    pub model_name: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

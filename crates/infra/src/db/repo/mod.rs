@@ -10,5 +10,5 @@ pub mod scenario;
 pub mod schedule;
 pub mod schedule_mgmt;
 pub mod symbol;
-pub mod trades;
+pub mod trade_cycle;
 pub mod user;

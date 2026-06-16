@@ -16,5 +16,9 @@ rust_decimal.workspace = true
 rust_decimal_macros.workspace = true
 tracing.workspace = true
 
+[features]
+default = []
+live-trading = []
+
 [dev-dependencies]
 tokio = { workspace = true }

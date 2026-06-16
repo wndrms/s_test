@@ -24,3 +24,4 @@ crates/web/dist/
 # Logs
 *.log
 
+.claude/settings.local.json

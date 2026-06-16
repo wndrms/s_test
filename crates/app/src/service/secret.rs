@@ -60,6 +60,13 @@ impl SecretService {
             .map_err(AppError::Internal)
     }
 
+    /// encrypt_payload로 암호화된 임의 바이트(예: 계좌번호)를 복호화한다.
+    pub fn decrypt_payload(&self, ciphertext: &[u8]) -> AppResult<Vec<u8>> {
+        self.encryptor
+            .decrypt(ciphertext)
+            .map_err(AppError::Internal)
+    }
+
     pub fn mask(&self, raw: &str) -> String {
         self.encryptor.mask(raw)
     }

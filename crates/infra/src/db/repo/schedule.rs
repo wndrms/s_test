@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use lumos_app::repo::schedule::{ManagerScheduleRepository, ScheduleRunRepository};
 use lumos_domain::model::schedule::{
-    ManagerSchedule, Market, RunType, ScheduleRun, ScheduleRunStatus, ScheduleSlot,
+    ManagerSchedule, Market, ScheduleRun, ScheduleRunStatus, ScheduleSlot,
 };
 
 // ─── ManagerSchedule ─────────────────────────────────────────────────────────
@@ -54,8 +54,6 @@ struct ScheduleSlotRow {
     id: Uuid,
     schedule_id: Uuid,
     time_of_day: NaiveTime,
-    run_scenario: bool,
-    run_trade: bool,
     enabled: bool,
 }
 
@@ -65,8 +63,6 @@ impl From<ScheduleSlotRow> for ScheduleSlot {
             id: r.id,
             schedule_id: r.schedule_id,
             time_of_day: r.time_of_day,
-            run_scenario: r.run_scenario,
-            run_trade: r.run_trade,
             enabled: r.enabled,
         }
     }
@@ -100,7 +96,7 @@ impl ManagerScheduleRepository for PgManagerScheduleRepository {
 
     async fn find_slots(&self, schedule_id: Uuid) -> Result<Vec<ScheduleSlot>> {
         let rows: Vec<ScheduleSlotRow> = sqlx::query_as::<_, ScheduleSlotRow>(
-            r#"SELECT id, schedule_id, time_of_day, run_scenario, run_trade, enabled
+            r#"SELECT id, schedule_id, time_of_day, enabled
                FROM schedule_slots WHERE schedule_id = $1 ORDER BY time_of_day"#,
         )
         .bind(schedule_id)
@@ -127,7 +123,6 @@ struct ScheduleRunRow {
     id: Uuid,
     manager_id: Uuid,
     schedule_slot_id: Uuid,
-    run_type: String,
     scheduled_for: DateTime<Utc>,
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
@@ -142,10 +137,6 @@ impl From<ScheduleRunRow> for ScheduleRun {
             id: r.id,
             manager_id: r.manager_id,
             schedule_slot_id: r.schedule_slot_id,
-            run_type: match r.run_type.as_str() {
-                "trade" => RunType::Trade,
-                _ => RunType::Scenario,
-            },
             scheduled_for: r.scheduled_for,
             started_at: r.started_at,
             finished_at: r.finished_at,
@@ -182,21 +173,19 @@ impl ScheduleRunRepository for PgScheduleRunRepository {
         &self,
         manager_id: Uuid,
         schedule_slot_id: Uuid,
-        run_type: &str,
         scheduled_for: DateTime<Utc>,
         idempotency_key: &str,
     ) -> Result<Option<ScheduleRun>> {
         let row: Option<ScheduleRunRow> = sqlx::query_as::<_, ScheduleRunRow>(
             r#"INSERT INTO schedule_runs
-               (manager_id, schedule_slot_id, run_type, scheduled_for, idempotency_key)
-               VALUES ($1, $2, $3, $4, $5)
+               (manager_id, schedule_slot_id, scheduled_for, idempotency_key)
+               VALUES ($1, $2, $3, $4)
                ON CONFLICT (idempotency_key) DO NOTHING
-               RETURNING id, manager_id, schedule_slot_id, run_type, scheduled_for,
+               RETURNING id, manager_id, schedule_slot_id, scheduled_for,
                          started_at, finished_at, status, error_message, idempotency_key"#,
         )
         .bind(manager_id)
         .bind(schedule_slot_id)
-        .bind(run_type)
         .bind(scheduled_for)
         .bind(idempotency_key)
         .fetch_optional(&self.pool)
@@ -221,7 +210,7 @@ impl ScheduleRunRepository for PgScheduleRunRepository {
                    started_at  = CASE WHEN $4 THEN COALESCE(started_at, now()) ELSE started_at END,
                    finished_at = CASE WHEN $5 THEN now() ELSE finished_at END
                WHERE id = $1
-               RETURNING id, manager_id, schedule_slot_id, run_type, scheduled_for,
+               RETURNING id, manager_id, schedule_slot_id, scheduled_for,
                          started_at, finished_at, status, error_message, idempotency_key"#,
         )
         .bind(id)

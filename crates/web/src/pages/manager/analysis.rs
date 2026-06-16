@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::api::client::{get_analysis_report, list_scenarios};
+use crate::api::client::{get_analysis_report, list_scenario_items, list_scenario_runs};
 use crate::api::types::{AnalysisReportDto, ScenarioItemDto};
 
 #[component]
@@ -9,63 +9,64 @@ pub fn AnalysisTab() -> impl IntoView {
     let params = use_params_map();
     let id_str = move || params.with(|p| p.get("id").unwrap_or_default());
 
+    // 모든 run의 items를 분석 리포트 기준으로 수집한다.
     let scenarios = LocalResource::new(move || {
         let id = id_str();
         async move {
             let uuid = uuid::Uuid::parse_str(&id).ok()?;
-            list_scenarios(uuid).await.ok()
+            let runs = list_scenario_runs(uuid).await.ok()?;
+            let mut items: Vec<ScenarioItemDto> = Vec::new();
+            for run in runs {
+                if let Ok(run_items) = list_scenario_items(uuid, run.id).await {
+                    items.extend(run_items);
+                }
+            }
+            Some(items)
         }
     });
 
+    let empty_state = || view! {
+        <div class="empty-state">
+            <span class="empty-icon">"📈"</span>
+            <p>"분석 리포트가 없습니다."</p>
+            <p class="text-muted">"시나리오가 생성되면 분석 리포트를 확인할 수 있습니다."</p>
+        </div>
+    };
+
     view! {
         <Suspense fallback=move || view! { <AnalysisSkeleton/> }>
-            {move || match scenarios.get().map(|w| (*w).clone()) {
-                None => view! { <AnalysisSkeleton/> }.into_any(),
-                Some(None) => view! {
-                    <div class="empty-state">
-                        <span class="empty-icon">"📈"</span>
-                        <p>"분석 리포트가 없습니다."</p>
-                        <p class="text-muted">"시나리오가 생성되면 분석 리포트를 확인할 수 있습니다."</p>
-                    </div>
-                }.into_any(),
-                Some(Some(list)) if list.is_empty() => view! {
-                    <div class="empty-state">
-                        <span class="empty-icon">"📈"</span>
-                        <p>"분석 리포트가 없습니다."</p>
-                        <p class="text-muted">"시나리오가 생성되면 분석 리포트를 확인할 수 있습니다."</p>
-                    </div>
-                }.into_any(),
-                Some(Some(list)) => {
-                    let manager_id_str = id_str();
-                    // analysis_report_id 기준으로 중복 제거 후 표시
-                    let mut seen = std::collections::HashSet::new();
-                    let unique: Vec<ScenarioItemDto> = list
-                        .into_iter()
-                        .filter(|i| {
-                            if let Some(rid) = i.analysis_report_id {
-                                seen.insert(rid)
-                            } else {
-                                false
-                            }
-                        })
-                        .collect();
+            {move || {
+                let loaded = scenarios.get().map(|w| (*w).clone());
+                match loaded {
+                    None => view! { <AnalysisSkeleton/> }.into_any(),
+                    Some(None) => empty_state().into_any(),
+                    Some(Some(list)) => {
+                        let manager_id_str = id_str();
+                        // analysis_report_id 기준으로 중복 제거 후 표시
+                        let mut seen = std::collections::HashSet::new();
+                        let unique: Vec<ScenarioItemDto> = list
+                            .into_iter()
+                            .filter(|i| {
+                                if let Some(rid) = i.analysis_report_id {
+                                    seen.insert(rid)
+                                } else {
+                                    false
+                                }
+                            })
+                            .collect();
 
-                    if unique.is_empty() {
-                        view! {
-                            <div class="empty-state">
-                                <span class="empty-icon">"📈"</span>
-                                <p>"분석 리포트가 없습니다."</p>
-                            </div>
-                        }.into_any()
-                    } else {
-                        view! {
-                            <div class="analysis-list">
-                                {unique.into_iter().map(|item| {
-                                    let manager_id = manager_id_str.clone();
-                                    view! { <AnalysisCard item=item manager_id_str=manager_id/> }
-                                }).collect_view()}
-                            </div>
-                        }.into_any()
+                        if unique.is_empty() {
+                            empty_state().into_any()
+                        } else {
+                            view! {
+                                <div class="analysis-list">
+                                    {unique.into_iter().map(|item| {
+                                        let manager_id = manager_id_str.clone();
+                                        view! { <AnalysisCard item=item manager_id_str=manager_id/> }
+                                    }).collect_view()}
+                                </div>
+                            }.into_any()
+                        }
                     }
                 }
             }}

@@ -2,7 +2,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use lumos_domain::model::scenario::{EvidenceCard, EvidenceSourceType, ScenarioItem, ScenarioRun, ScenarioStatus};
+use lumos_domain::model::scenario::{
+    EvidenceCard, EvidenceSourceType, ScenarioItem, ScenarioOutcome, ScenarioRun, ScenarioStatus,
+};
 
 #[async_trait]
 pub trait EvidenceCardRepository: Send + Sync {
@@ -44,4 +46,30 @@ pub trait ScenarioItemRepository: Send + Sync {
     async fn find_by_run_and_id(&self, item_id: Uuid) -> Result<Option<ScenarioItem>>;
     /// 매니저의 가장 최근 scenario_run에서 Buy/Sell 액션인 항목을 반환
     async fn find_pending_for_manager(&self, manager_id: Uuid) -> Result<Vec<ScenarioItem>>;
+}
+
+/// 평가 대상 시나리오 항목 (생성 run 시각 포함).
+pub struct EvaluableItem {
+    pub item: ScenarioItem,
+    pub run_created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[async_trait]
+pub trait ScenarioOutcomeRepository: Send + Sync {
+    /// 아직 평가되지 않았고, target/stop이 설정된 시나리오 항목을 반환한다.
+    /// `created_before`보다 이전에 생성된 run의 항목만 (평가 가능 기간 경과분).
+    async fn find_unevaluated(
+        &self,
+        created_before: chrono::DateTime<chrono::Utc>,
+        limit: u32,
+    ) -> Result<Vec<EvaluableItem>>;
+
+    async fn create(&self, outcome: ScenarioOutcome) -> Result<ScenarioOutcome>;
+
+    /// 심볼의 최근 평가 결과 (프롬프트 피드백용).
+    async fn find_recent_for_symbol(
+        &self,
+        symbol_id: Uuid,
+        limit: u32,
+    ) -> Result<Vec<ScenarioOutcome>>;
 }

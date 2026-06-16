@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -439,7 +439,7 @@ fn parse_scenario_output(raw: &str, input: &ScenarioPromptInput) -> Result<Scena
 
 fn parse_scenario_items(
     v: &serde_json::Value,
-    input: &ScenarioPromptInput,
+    _input: &ScenarioPromptInput,
 ) -> Result<Vec<ScenarioItem>> {
     let arr = v
         .as_array()

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -14,9 +13,7 @@ use uuid::Uuid;
 use lumos_app::error::AppError;
 use lumos_app::repo::order_plan::OrderPlan;
 use lumos_app::service::order_plan::OrderPlanService;
-use lumos_domain::model::broker::BrokerEnvironment;
-use lumos_domain::port::broker::Broker;
-use lumos_infra::kis::{KisClient, KisEnvironment, PaperBroker};
+use lumos_infra::broker_factory::DefaultBrokerFactory;
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -126,48 +123,20 @@ async fn execute_order_plan(
         .map_err(|e| ApiError::from(AppError::Internal(e)))?
         .ok_or_else(|| ApiError::from(AppError::NotFound("symbol".to_string())))?;
 
-    // 5. broker_connection 환경에 맞는 broker 생성
-    //    TODO: app_key/secret은 secret_service로 복호화 예정 — MVP에서는 env var 폴백
-    let broker: Arc<dyn Broker> = build_broker_for_connection(&conn);
+    // 5. 매니저의 broker_connection으로 broker를 동적 생성하는 factory를 주입해 실행한다.
+    //    (Real → KisClient, Paper → PaperBroker; 시크릿은 secret_service로 복호화)
+    let _ = &conn; // conn은 존재 검증용 (factory가 id로 재조회)
 
     // 6. symbol_code를 채운 plan으로 실행
     let mut plan_with_symbol = plan;
     plan_with_symbol.symbol_code = Some(symbol.code.clone());
 
-    let svc = build_service_with_broker(&state, broker);
+    let svc = build_service_with_broker(&state);
     svc.execute_approved(&plan_with_symbol, conn.id)
         .await
         .map_err(ApiError::from)?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-/// broker_connection의 환경에 맞는 Broker 인스턴스를 생성한다.
-/// MVP: app_key/secret은 환경변수에서 읽는다. 이후 secret_service 연동 예정.
-fn build_broker_for_connection(conn: &lumos_domain::model::broker::BrokerConnection) -> Arc<dyn Broker> {
-    let app_key = std::env::var("KIS_APP_KEY").unwrap_or_default();
-    let app_secret = std::env::var("KIS_APP_SECRET").unwrap_or_default();
-    let account_no = std::env::var("KIS_ACCOUNT_NO").unwrap_or_default();
-    let account_product = std::env::var("KIS_ACCOUNT_PRODUCT").unwrap_or_else(|_| "01".to_string());
-
-    if app_key.is_empty() || app_secret.is_empty() || account_no.is_empty() {
-        tracing::warn!(
-            broker_connection_id = %conn.id,
-            "KIS credentials not in env — using PaperBroker for execution"
-        );
-        return Arc::new(PaperBroker::with_static_quotes(
-            conn.id,
-            rust_decimal::Decimal::from(50_000_000u64),
-            lumos_domain::model::symbol::Currency::Krw,
-            HashMap::new(),
-        ));
-    }
-
-    let env = match conn.environment {
-        BrokerEnvironment::Real => KisEnvironment::Real,
-        BrokerEnvironment::Paper => KisEnvironment::Paper,
-    };
-    Arc::new(KisClient::new(env, app_key, app_secret, account_no, account_product))
 }
 
 pub fn build_service(state: &AppState) -> OrderPlanService {
@@ -179,12 +148,18 @@ pub fn build_service(state: &AppState) -> OrderPlanService {
     .with_notification(state.notification_service.clone())
 }
 
-fn build_service_with_broker(state: &AppState, broker: Arc<dyn Broker>) -> OrderPlanService {
+fn build_service_with_broker(state: &AppState) -> OrderPlanService {
+    let broker_factory: Arc<dyn lumos_app::service::broker_factory::BrokerFactory> =
+        Arc::new(DefaultBrokerFactory::new(
+            state.broker_connection_repo.clone(),
+            state.secret_service.clone(),
+        ));
     OrderPlanService::new(
         state.order_plan_repo.clone(),
         state.scenario_item_repo.clone(),
         state.risk_policy_repo.clone(),
     )
-    .with_broker(broker, state.broker_order_repo.clone())
+    .with_broker_factory(broker_factory, state.broker_order_repo.clone())
+    .with_trade_cycle_repo(state.trade_cycle_repo.clone())
     .with_notification(state.notification_service.clone())
 }

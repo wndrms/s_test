@@ -53,6 +53,10 @@ CREATE TABLE managers (
     initial_capital NUMERIC(24,8) NOT NULL,
     auto_trade_enabled BOOLEAN NOT NULL DEFAULT false,
     status TEXT NOT NULL CHECK (status IN ('active','paused','deleted')) DEFAULT 'active',
+    -- 매니저당 LLM 연결: llm_key_id가 NULL이면 서버 기본 LLM(환경변수) 사용
+    llm_key_id UUID REFERENCES secret_keys(id),
+    model_provider TEXT NOT NULL DEFAULT 'openai',
+    model_name TEXT NOT NULL DEFAULT 'gpt-4o-mini',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -93,7 +97,6 @@ CREATE TABLE manager_universe (
 
 CREATE TABLE risk_policies (
     manager_id UUID PRIMARY KEY REFERENCES managers(id),
-    max_position_pct NUMERIC(8,4) NOT NULL DEFAULT 5.0,
     max_single_order_amount_krw NUMERIC(24,4) NOT NULL DEFAULT 1000000,
     max_daily_loss_pct NUMERIC(8,4) NOT NULL DEFAULT 2.0,
     max_daily_trade_count INTEGER NOT NULL DEFAULT 20,
@@ -121,8 +124,7 @@ CREATE TABLE schedule_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     schedule_id UUID NOT NULL REFERENCES manager_schedules(id),
     time_of_day TIME NOT NULL,
-    run_scenario BOOLEAN NOT NULL DEFAULT false,
-    run_trade BOOLEAN NOT NULL DEFAULT false,
+    -- 활성화된 슬롯은 시나리오 생성 → 매매를 하나의 사이클로 실행한다.
     enabled BOOLEAN NOT NULL DEFAULT true,
     UNIQUE(schedule_id, time_of_day)
 );
@@ -131,7 +133,6 @@ CREATE TABLE schedule_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     manager_id UUID NOT NULL REFERENCES managers(id),
     schedule_slot_id UUID NOT NULL REFERENCES schedule_slots(id),
-    run_type TEXT NOT NULL CHECK (run_type IN ('scenario','trade')),
     scheduled_for TIMESTAMPTZ NOT NULL,
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
@@ -269,6 +270,21 @@ CREATE TABLE scenario_items (
     risk_text TEXT,
     rank_order INTEGER NOT NULL DEFAULT 0
 );
+
+-- 자기진화: 생성된 시나리오의 target/stop 적중 여부를 사후 평가해 기록한다.
+CREATE TABLE scenario_outcomes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scenario_item_id UUID NOT NULL REFERENCES scenario_items(id),
+    symbol_id UUID NOT NULL REFERENCES symbols(id),
+    -- 평가 결과: target 도달 / stop 도달 / 둘 다 미발생(pending 만료)
+    result TEXT NOT NULL CHECK (result IN ('target_hit','stop_hit','expired')),
+    evaluated_price NUMERIC(24,8) NOT NULL,
+    base_price NUMERIC(24,8),
+    return_pct NUMERIC(10,4),
+    evaluated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(scenario_item_id)
+);
+CREATE INDEX idx_scenario_outcomes_symbol ON scenario_outcomes(symbol_id, evaluated_at DESC);
 
 CREATE TABLE chart_annotations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

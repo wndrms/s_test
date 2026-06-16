@@ -31,3 +31,7 @@ dotenvy.workspace = true
 jsonwebtoken.workspace = true
 rand.workspace = true
 base64.workspace = true
+
+[features]
+default = []
+live-trading = ["lumos-infra/live-trading", "lumos-app/live-trading"]

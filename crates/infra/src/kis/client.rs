@@ -18,10 +18,9 @@ use lumos_domain::port::broker::Broker;
 
 use super::dto::{
     DomesticBalancePosition, DomesticBalanceResponse, DomesticCancelOrderBody, DomesticOrderBody,
-    DomesticQuoteResponse, InvestorFlowItem, InvestorFlowResponse, OrderFillOutput,
-    OrderFillsResponse, OrderResponse, OrderResponseOutput, OverseasBalancePosition,
-    OverseasBalanceResponse, OverseasBalanceSummary, OverseasOrderBody, OverseasQuoteResponse,
-    TokenResponse,
+    DomesticQuoteResponse, HashkeyResponse, InvestorFlowItem, InvestorFlowResponse, OrderFillsResponse, OrderResponse, OrderResponseOutput,
+    OverseasBalancePosition, OverseasBalanceResponse, OverseasBalanceSummary, OverseasOrderBody,
+    OverseasQuoteResponse, TokenResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +85,26 @@ impl KisClient {
         let token = token_resp.access_token.clone();
         *self.access_token.write().await = Some(token.clone());
         Ok(token)
+    }
+
+    /// 주문 등 POST 바디의 무결성 검증용 hashkey를 발급받는다.
+    /// KIS 공식 샘플상 필수는 아니지만 POST 주문 호출의 안전장치로 사용한다.
+    pub async fn hashkey<T: serde::Serialize>(&self, body: &T) -> Result<String> {
+        let url = format!("{}/uapi/hashkey", self.env.base_url());
+        let resp = self
+            .http
+            .post(&url)
+            .header("appkey", &self.app_key)
+            .header("appsecret", &self.app_secret)
+            .header("content-type", "application/json")
+            .json(body)
+            .send()
+            .await
+            .context("KIS hashkey request failed")?
+            .json::<HashkeyResponse>()
+            .await
+            .context("KIS hashkey parse failed")?;
+        Ok(resp.hash)
     }
 
     pub fn requires_access_token_for_balance(&self) -> bool {
@@ -484,8 +503,8 @@ impl KisClient {
 
     pub async fn domestic_order_fills(
         &self,
-        trading_date: NaiveDate,
-        symbol_code: Option<&str>,
+        _trading_date: NaiveDate,
+        _symbol_code: Option<&str>,
     ) -> Result<Vec<BrokerFill>> {
         #[cfg(feature = "offline-fixtures")]
         return self.order_fills_fixture();
@@ -516,7 +535,7 @@ impl KisClient {
             self.env.base_url()
         );
         let date_str = trading_date.format("%Y%m%d").to_string();
-        let mut query = vec![
+        let query = vec![
             ("CANO", self.account_no.as_str()),
             ("ACNT_PRDT_CD", self.account_product.as_str()),
             ("INQR_STRT_DT", date_str.as_str()),
@@ -611,13 +630,46 @@ impl KisClient {
 
     // ─── Limit Order ──────────────────────────────────────────────────────────
 
+    /// 국내 지정가 매수 주문.
+    #[cfg(feature = "live-trading")]
+    pub async fn domestic_buy_limit_order(
+        &self,
+        req: &LimitOrderRequest,
+    ) -> Result<BrokerOrderResponse> {
+        self.domestic_limit_order_with_side(req, OrderSide::Buy)
+            .await
+    }
+
+    /// 국내 지정가 매도 주문.
+    #[cfg(feature = "live-trading")]
+    pub async fn domestic_sell_limit_order(
+        &self,
+        req: &LimitOrderRequest,
+    ) -> Result<BrokerOrderResponse> {
+        self.domestic_limit_order_with_side(req, OrderSide::Sell)
+            .await
+    }
+
+    /// req.side에 따라 매수/매도 주문을 분기 실행한다 (Broker trait용 진입점).
     #[cfg(feature = "live-trading")]
     pub async fn domestic_limit_order(
         &self,
         req: &LimitOrderRequest,
     ) -> Result<BrokerOrderResponse> {
+        match req.side {
+            OrderSide::Buy => self.domestic_buy_limit_order(req).await,
+            OrderSide::Sell => self.domestic_sell_limit_order(req).await,
+        }
+    }
+
+    #[cfg(feature = "live-trading")]
+    async fn domestic_limit_order_with_side(
+        &self,
+        req: &LimitOrderRequest,
+        side: OrderSide,
+    ) -> Result<BrokerOrderResponse> {
         let token = self.bearer_token().await?;
-        let tr_id = match (&self.env, &req.side) {
+        let tr_id = match (&self.env, &side) {
             (KisEnvironment::Real, OrderSide::Buy) => "TTTC0802U",
             (KisEnvironment::Real, OrderSide::Sell) => "TTTC0801U",
             (KisEnvironment::Paper, OrderSide::Buy) => "VTTC0802U",
@@ -635,13 +687,19 @@ impl KisClient {
             ORD_QTY: req.quantity.to_string(),
             ORD_UNPR: req.limit_price.to_string(),
         };
-        let resp = self
+        // POST 주문 무결성 검증용 hashkey (실패해도 주문은 진행).
+        let hash = self.hashkey(&body).await.ok();
+        let mut request = self
             .http
             .post(&url)
             .header("authorization", format!("Bearer {token}"))
             .header("appkey", &self.app_key)
             .header("appsecret", &self.app_secret)
-            .header("tr_id", tr_id)
+            .header("tr_id", tr_id);
+        if let Some(h) = hash {
+            request = request.header("hashkey", h);
+        }
+        let resp = request
             .json(&body)
             .send()
             .await?
@@ -719,7 +777,7 @@ fn read_fixture_or_embedded(path: &str, embedded: &'static str) -> String {
 }
 
 #[cfg(feature = "offline-fixtures")]
-fn mock_investor_flow(symbol_code: &str, days: u32) -> Vec<InvestorFlowItem> {
+fn mock_investor_flow(_symbol_code: &str, days: u32) -> Vec<InvestorFlowItem> {
     use chrono::{Duration, NaiveDate};
     let base = NaiveDate::from_ymd_opt(2024, 4, 1).unwrap();
     let count = days.min(30) as i64;
@@ -1082,5 +1140,57 @@ mod tests {
             .unwrap();
         // cash = 5_000_000 / 50_000 = 100
         assert_eq!(bp.max_quantity, Decimal::from(100u32));
+    }
+
+    // ─── Online tests (실제 KIS 모의투자 REST 호출) ─────────────────────────────
+    //
+    // `online-kis` feature로만 컴파일되고, `#[ignore]`라 기본 `cargo test`에서 제외된다.
+    // 실행: cargo test -p lumos-infra --features online-kis -- --ignored
+    // 환경변수 KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO / KIS_ACCOUNT_PRODUCT 필요.
+    #[cfg(feature = "online-kis")]
+    fn online_client() -> KisClient {
+        KisClient::new(
+            KisEnvironment::Paper,
+            std::env::var("KIS_APP_KEY").expect("KIS_APP_KEY"),
+            std::env::var("KIS_APP_SECRET").expect("KIS_APP_SECRET"),
+            std::env::var("KIS_ACCOUNT_NO").expect("KIS_ACCOUNT_NO"),
+            std::env::var("KIS_ACCOUNT_PRODUCT").unwrap_or_else(|_| "01".to_string()),
+        )
+    }
+
+    #[tokio::test]
+    #[ignore = "online: requires KIS paper credentials"]
+    #[cfg(feature = "online-kis")]
+    async fn online_issue_access_token() {
+        let client = online_client();
+        let token = client.issue_access_token().await.unwrap();
+        assert!(!token.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "online: requires KIS paper credentials"]
+    #[cfg(feature = "online-kis")]
+    async fn online_hashkey_returns_hash() {
+        let client = online_client();
+        let body = serde_json::json!({
+            "CANO": "12345678",
+            "ACNT_PRDT_CD": "01",
+            "PDNO": "005930",
+            "ORD_DVSN": "00",
+            "ORD_QTY": "1",
+            "ORD_UNPR": "70000",
+        });
+        let hash = client.hashkey(&body).await.unwrap();
+        assert!(!hash.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "online: requires KIS paper credentials"]
+    #[cfg(feature = "online-kis")]
+    async fn online_domestic_quote() {
+        let client = online_client();
+        client.issue_access_token().await.unwrap();
+        let snapshot = client.domestic_quote("005930").await.unwrap();
+        assert!(snapshot.last_price > Decimal::ZERO);
     }
 }

@@ -10,7 +10,7 @@ use lumos_app::repo::order_plan::OrderPlanRepository;
 use lumos_app::repo::scenario::ScenarioItemRepository;
 use lumos_app::repo::schedule::{ManagerScheduleRepository, ManagerScheduleWriteRepository};
 use lumos_app::repo::symbol::SymbolRepository;
-use lumos_app::repo::trades::TradesRepository;
+use lumos_app::repo::trade_cycle::TradeCycleRepository;
 use lumos_app::service::llm_key::LlmKeyService;
 use lumos_app::service::manager::ManagerService;
 use lumos_app::service::notification::NotificationService;
@@ -20,13 +20,15 @@ use sqlx::PgPool;
 
 #[derive(Clone)]
 pub struct AppState {
+    /// 풀 핸들. 일부 라우트가 직접 쿼리할 때 사용 (현재는 repo 경유).
+    #[allow(dead_code)]
     pub db: PgPool,
     pub manager_service: Arc<ManagerService>,
     pub secret_service: Arc<SecretService>,
     pub scenario_service: Arc<ScenarioService>,
     pub symbol_repo: Arc<dyn SymbolRepository>,
     pub holdings_repo: Arc<dyn HoldingsRepository>,
-    pub trades_repo: Arc<dyn TradesRepository>,
+    pub trade_cycle_repo: Arc<dyn TradeCycleRepository>,
     pub schedule_read_repo: Arc<dyn ManagerScheduleRepository>,
     pub schedule_write_repo: Arc<dyn ManagerScheduleWriteRepository>,
     pub analysis_report_repo: Arc<dyn AnalysisReportRepository>,

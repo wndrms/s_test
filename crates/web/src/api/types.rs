@@ -34,6 +34,40 @@ pub struct LlmKeyDto {
     pub created_at: String,
 }
 
+// ─── Schedule ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScheduleSlotDto {
+    pub id: Uuid,
+    /// "HH:MM:SS" 형식
+    pub time_of_day: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScheduleDto {
+    pub id: Uuid,
+    pub manager_id: Uuid,
+    pub market: String,
+    pub timezone: String,
+    pub enabled: bool,
+    pub slots: Vec<ScheduleSlotDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SlotRequest {
+    /// "HH:MM:SS" 형식
+    pub time_of_day: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpsertScheduleRequest {
+    pub market: String,
+    pub timezone: String,
+    pub slots: Vec<SlotRequest>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagerDto {
     pub id: Uuid,
@@ -43,6 +77,8 @@ pub struct ManagerDto {
     pub base_currency: String,
     pub auto_trade_enabled: bool,
     pub status: String,
+    #[serde(default)]
+    pub initial_capital: Option<serde_json::Value>,
 }
 
 impl ManagerDto {
@@ -52,17 +88,31 @@ impl ManagerDto {
     pub fn is_active(&self) -> bool {
         self.status == "active"
     }
+    /// 초기 자본금 문자열 — 쉼표 포맷 (없으면 "—")
+    pub fn initial_capital_str(&self) -> String {
+        let v = self.initial_capital_val();
+        if v == 0.0 && self.initial_capital.is_none() {
+            return "—".to_string();
+        }
+        format_krw(v)
+    }
+    pub fn initial_capital_val(&self) -> f64 {
+        self.initial_capital.as_ref().map(json_to_f64).unwrap_or(0.0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskPolicyDto {
-    pub max_position_pct: String,
     pub max_single_order_amount_krw: String,
     pub max_daily_loss_pct: String,
     pub max_daily_trade_count: i32,
     pub allow_market_order: bool,
     pub min_ai_confidence_pct: String,
     pub min_evidence_count: i32,
+    #[serde(default)]
+    pub require_fresh_quote_seconds: i32,
+    #[serde(default)]
+    pub require_fresh_account_seconds: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -128,6 +178,71 @@ impl HoldingDto {
     }
     pub fn unrealized_pnl_pct_val(&self) -> f64 {
         self.unrealized_pnl_pct.unwrap_or(0.0)
+    }
+    pub fn market_value_val(&self) -> f64 {
+        self.market_value.as_ref().map(json_to_f64).unwrap_or(0.0)
+    }
+    pub fn unrealized_pnl_val(&self) -> f64 {
+        self.unrealized_pnl.as_ref().map(json_to_f64).unwrap_or(0.0)
+    }
+}
+
+/// serde_json::Value(숫자 또는 숫자 문자열)를 f64로 파싱한다.
+pub fn json_to_f64(v: &serde_json::Value) -> f64 {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        serde_json::Value::String(s) => s.parse().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+/// f64를 KRW 쉼표 포맷으로 변환 (예: 10000000 → "10,000,000")
+pub fn format_krw(v: f64) -> String {
+    let neg = v < 0.0;
+    let i = v.abs() as u64;
+    let s = i.to_string();
+    let mut result = String::new();
+    for (idx, ch) in s.chars().rev().enumerate() {
+        if idx > 0 && idx % 3 == 0 {
+            result.push(',');
+        }
+        result.push(ch);
+    }
+    let formatted: String = result.chars().rev().collect();
+    if neg { format!("-{}", formatted) } else { formatted }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TradeCycleDto {
+    pub id: Uuid,
+    pub symbol_id: Uuid,
+    pub symbol_code: String,
+    pub status: String,
+    pub open_quantity: serde_json::Value,
+    pub total_buy_quantity: serde_json::Value,
+    pub total_sell_quantity: serde_json::Value,
+    pub avg_entry_price: serde_json::Value,
+    pub avg_exit_price: serde_json::Value,
+    pub realized_pnl: serde_json::Value,
+    pub total_fee: serde_json::Value,
+    pub total_tax: serde_json::Value,
+    pub fill_count: i32,
+    pub opened_at: String,
+    pub closed_at: Option<String>,
+}
+
+impl TradeCycleDto {
+    pub fn realized_pnl_val(&self) -> f64 {
+        json_to_f64(&self.realized_pnl)
+    }
+    pub fn avg_entry_str(&self) -> String {
+        self.avg_entry_price.to_string()
+    }
+    pub fn avg_exit_str(&self) -> String {
+        self.avg_exit_price.to_string()
+    }
+    pub fn is_open(&self) -> bool {
+        self.status == "open"
     }
 }
 

@@ -7,4 +7,5 @@ pub mod risk;
 pub mod scenario;
 pub mod schedule;
 pub mod symbol;
+pub mod trade_cycle;
 pub mod user;

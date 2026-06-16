@@ -6,7 +6,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskPolicy {
     pub manager_id: Uuid,
-    pub max_position_pct: Decimal,
     pub max_single_order_amount_krw: Decimal,
     pub max_daily_loss_pct: Decimal,
     pub max_daily_trade_count: i32,
@@ -25,7 +24,6 @@ impl RiskPolicy {
         use rust_decimal_macros::dec;
         Self {
             manager_id,
-            max_position_pct: dec!(5.0),
             max_single_order_amount_krw: dec!(1000000),
             max_daily_loss_pct: dec!(2.0),
             max_daily_trade_count: 20,

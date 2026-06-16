@@ -176,7 +176,18 @@ pub fn ManagerNewPage() -> impl IntoView {
                             <select
                                 class="form-select"
                                 prop:value=mode
-                                on:change=move |ev| mode.set(event_target_value(&ev))
+                                on:change=move |ev| {
+                                    let v = event_target_value(&ev);
+                                    // 모의로 전환 시 KIS 입력값을 비워 잘못된 제출을 방지한다.
+                                    if v == "paper" {
+                                        kis_app_key.set(String::new());
+                                        kis_app_secret.set(String::new());
+                                        kis_account_no.set(String::new());
+                                        account_verified.set(false);
+                                        account_message.set(None);
+                                    }
+                                    mode.set(v);
+                                }
                             >
                                 <option value="paper">"모의 (Paper)"</option>
                                 <option value="live">"실전 (Live)"</option>
@@ -217,8 +228,17 @@ pub fn ManagerNewPage() -> impl IntoView {
                         </p>
                     </div>
 
-                    <div style="border-top:1px solid var(--border); padding-top:16px; margin-top:8px;">
+                    <div
+                        style=move || if mode.get() == "live" {
+                            "border-top:1px solid var(--border); padding-top:16px; margin-top:8px;".to_string()
+                        } else {
+                            "display:none;".to_string()
+                        }
+                    >
                         <div class="card-section-title">"계좌 연결"</div>
+                        <p class="form-hint" style="margin-bottom:12px;">
+                            "실전(Live) 매매는 한국투자증권 계좌 연결이 필요합니다."
+                        </p>
 
                         <div class="form-row">
                             <div class="form-group">

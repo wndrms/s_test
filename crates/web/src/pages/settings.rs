@@ -33,7 +33,7 @@ fn SystemInfoSection() -> impl IntoView {
                     </tr>
                     <tr>
                         <td class="info-label">"지원 시장"</td>
-                        <td>"KRX 정규장 + 미국 NYSE/NASDAQ"</td>
+                        <td>"KRX 정규장 / 미국 NYSE·NASDAQ (매니저별 선택)"</td>
                     </tr>
                     <tr>
                         <td class="info-label">"주문 방식"</td>

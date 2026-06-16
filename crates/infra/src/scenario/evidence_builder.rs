@@ -4,7 +4,9 @@ use rust_decimal_macros::dec;
 use uuid::Uuid;
 
 use lumos_domain::model::market::QuoteSnapshot;
-use lumos_domain::model::scenario::{EvidenceCard, EvidenceSourceType, SentimentLabel};
+use lumos_domain::model::scenario::{
+    EvidenceCard, EvidenceSourceType, OutcomeResult, ScenarioOutcome, SentimentLabel,
+};
 use lumos_domain::port::disclosure::DisclosureItem;
 use lumos_domain::port::news::NewsItem;
 
@@ -19,6 +21,59 @@ pub fn default_reliability(source_type: &EvidenceSourceType) -> Decimal {
         EvidenceSourceType::News => dec!(0.65),
         EvidenceSourceType::Community => dec!(0.35),
     }
+}
+
+/// 과거 시나리오 평가 결과를 요약한 EvidenceCard (자기진화 피드백).
+/// 최근 outcome들의 적중률을 LLM 프롬프트 컨텍스트로 제공한다.
+/// 평가 이력이 없으면 None.
+pub fn from_scenario_outcomes(
+    symbol_id: Uuid,
+    outcomes: &[ScenarioOutcome],
+) -> Option<EvidenceCard> {
+    if outcomes.is_empty() {
+        return None;
+    }
+    let total = outcomes.len();
+    let target_hits = outcomes
+        .iter()
+        .filter(|o| o.result == OutcomeResult::TargetHit)
+        .count();
+    let stop_hits = outcomes
+        .iter()
+        .filter(|o| o.result == OutcomeResult::StopHit)
+        .count();
+    let expired = total - target_hits - stop_hits;
+    let hit_rate = (target_hits as f64 / total as f64 * 100.0).round() as i64;
+
+    let title = format!("과거 시나리오 적중률 {hit_rate}% (최근 {total}건)");
+    let summary = format!(
+        "이 종목의 최근 시나리오 평가: 목표가 도달 {target_hits}건, 손절 {stop_hits}건, \
+         미발생 {expired}건 (총 {total}건, 적중률 {hit_rate}%). \
+         과거 예측 정확도를 참고하여 신뢰도를 보정하라.",
+    );
+    let sentiment = if hit_rate >= 50 {
+        SentimentLabel::Positive
+    } else {
+        SentimentLabel::Negative
+    };
+
+    Some(EvidenceCard {
+        id: Uuid::new_v4(),
+        symbol_id,
+        source_type: EvidenceSourceType::Technical,
+        source_name: "self-evolution".to_string(),
+        source_ref_table: Some("scenario_outcomes".to_string()),
+        source_ref_id: None,
+        title,
+        summary,
+        url: None,
+        sentiment_label: Some(sentiment),
+        importance_score: dec!(0.70),
+        reliability_score: dec!(0.90),
+        as_of: Utc::now(),
+        fetched_at: Utc::now(),
+        created_at: Utc::now(),
+    })
 }
 
 pub fn from_quote(symbol_id: Uuid, snapshot: &QuoteSnapshot) -> EvidenceCard {
@@ -155,7 +210,7 @@ pub fn from_naver_consensus(symbol_id: Uuid, data: &NaverFinanceData) -> Option<
         return None;
     }
 
-    let reliability = default_reliability(&EvidenceSourceType::Financial);
+    let _reliability = default_reliability(&EvidenceSourceType::Financial);
 
     let target_str = data
         .target_price

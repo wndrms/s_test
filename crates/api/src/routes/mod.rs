@@ -9,6 +9,7 @@ pub mod paper_orders;
 pub mod scenarios;
 pub mod schedule_api;
 pub mod symbols;
+pub mod trade_cycles;
 pub mod trades;
 
 use axum::{middleware, routing::get, Router};
@@ -24,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/managers/:manager_id/scenarios", scenarios::router())
         .nest("/managers/:manager_id/holdings", holdings::router())
         .nest("/managers/:manager_id/trades", trades::router())
+        .nest("/managers/:manager_id/trade-cycles", trade_cycles::router())
         .nest("/managers/:manager_id/schedule", schedule_api::router())
         .nest(
             "/managers/:manager_id/analysis-reports",

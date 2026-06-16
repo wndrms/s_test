@@ -8,15 +8,21 @@ mod scheduler;
 
 use lumos_app::service::order_plan::OrderPlanService;
 use lumos_app::service::scenario::ScenarioService;
+use lumos_app::service::secret::SecretService;
+use lumos_infra::broker_factory::DefaultBrokerFactory;
 use lumos_infra::crypto::AesGcmEncryptor;
 use lumos_infra::db::pg_pool;
 use lumos_infra::kis::{KisClient, KisEnvironment};
 
 use lumos_infra::db::repo::analysis_report::PgAnalysisReportRepository;
+use lumos_infra::db::repo::broker_connection::PgBrokerConnectionRepository;
+use lumos_infra::db::repo::broker_order::PgBrokerOrderRepository;
 use lumos_infra::db::repo::manager::{PgManagerRepository, PgRiskPolicyRepository};
 use lumos_infra::db::repo::order_plan::PgOrderPlanRepository;
+use lumos_infra::db::repo::user::PgSecretKeyRepository;
 use lumos_infra::db::repo::scenario::{
-    PgEvidenceCardRepository, PgScenarioItemRepository, PgScenarioRunRepository,
+    PgEvidenceCardRepository, PgScenarioItemRepository, PgScenarioOutcomeRepository,
+    PgScenarioRunRepository,
 };
 use lumos_infra::db::repo::schedule::{PgManagerScheduleRepository, PgScheduleRunRepository};
 use lumos_infra::db::repo::symbol::PgSymbolRepository;
@@ -46,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("migration failed")?;
 
-    let _encryptor = Arc::new(
+    let encryptor = Arc::new(
         AesGcmEncryptor::from_base64(&encryption_key).context("invalid ENCRYPTION_KEY")?,
     );
 
@@ -55,7 +61,8 @@ async fn main() -> anyhow::Result<()> {
 
     let symbol_repo: Arc<dyn lumos_app::repo::symbol::SymbolRepository> =
         Arc::new(PgSymbolRepository::new(pool.clone()));
-    let evidence_repo = Arc::new(PgEvidenceCardRepository::new(pool.clone()));
+    let evidence_repo: Arc<dyn lumos_app::repo::scenario::EvidenceCardRepository> =
+        Arc::new(PgEvidenceCardRepository::new(pool.clone()));
     let scenario_run_repo = Arc::new(PgScenarioRunRepository::new(pool.clone()));
     let scenario_item_repo: Arc<dyn lumos_app::repo::scenario::ScenarioItemRepository> =
         Arc::new(PgScenarioItemRepository::new(pool.clone()));
@@ -76,12 +83,14 @@ async fn main() -> anyhow::Result<()> {
     let scenario_svc = Arc::new(
         ScenarioService::new(
             llm,
-            evidence_repo,
+            Arc::clone(&evidence_repo),
             scenario_run_repo,
             Arc::clone(&scenario_item_repo),
             Arc::clone(&symbol_repo),
         )
-        .with_report_repo(report_repo),
+        .with_report_repo(report_repo)
+        // 멀티스텝 파이프라인 활성화: fundamentals → news → strategy → critic
+        .with_multistep(),
     );
 
     let manager_repo: Arc<dyn lumos_app::repo::manager::ManagerRepository> =
@@ -91,14 +100,31 @@ async fn main() -> anyhow::Result<()> {
     let risk_policy_repo: Arc<dyn lumos_app::repo::manager::RiskPolicyRepository> =
         Arc::new(PgRiskPolicyRepository::new(pool.clone()));
 
-    let order_plan_svc = Arc::new(OrderPlanService::new(
-        Arc::clone(&order_plan_repo),
-        Arc::clone(&scenario_item_repo),
-        Arc::clone(&risk_policy_repo),
-    ));
+    // 매니저별 broker(Real/Paper)를 동적 생성하는 factory 배선
+    let secret_key_repo: Arc<dyn lumos_app::repo::user::SecretKeyRepository> =
+        Arc::new(PgSecretKeyRepository::new(pool.clone()));
+    let secret_service = Arc::new(SecretService::new(secret_key_repo, encryptor));
+    let broker_conn_repo: Arc<dyn lumos_app::repo::broker_connection::BrokerConnectionRepository> =
+        Arc::new(PgBrokerConnectionRepository::new(pool.clone()));
+    let broker_factory: Arc<dyn lumos_app::service::broker_factory::BrokerFactory> = Arc::new(
+        DefaultBrokerFactory::new(Arc::clone(&broker_conn_repo), Arc::clone(&secret_service)),
+    );
+    let broker_order_repo: Arc<dyn lumos_app::repo::broker_order::BrokerOrderRepository> =
+        Arc::new(PgBrokerOrderRepository::new(pool.clone()));
+
+    let order_plan_svc = Arc::new(
+        OrderPlanService::new(
+            Arc::clone(&order_plan_repo),
+            Arc::clone(&scenario_item_repo),
+            Arc::clone(&risk_policy_repo),
+        )
+        .with_broker_factory(broker_factory, broker_order_repo),
+    );
 
     let schedule_repo = Arc::new(PgManagerScheduleRepository::new(pool.clone()));
     let run_repo = Arc::new(PgScheduleRunRepository::new(pool.clone()));
+    let outcome_repo: Arc<dyn lumos_app::repo::scenario::ScenarioOutcomeRepository> =
+        Arc::new(PgScenarioOutcomeRepository::new(pool.clone()));
 
     let mut sched_builder = scheduler::Scheduler::new(
         schedule_repo,
@@ -107,8 +133,10 @@ async fn main() -> anyhow::Result<()> {
         symbol_repo,
         manager_repo,
         scenario_item_repo,
+        evidence_repo,
     )
-    .with_order_plan_svc(order_plan_svc);
+    .with_order_plan_svc(order_plan_svc)
+    .with_outcome_repo(outcome_repo);
 
     // 네이버 뉴스 클라이언트 (NAVER_CLIENT_ID + NAVER_CLIENT_SECRET 둘 다 있어야 활성화)
     if let (Ok(client_id), Ok(client_secret)) = (

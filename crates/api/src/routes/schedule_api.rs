@@ -24,8 +24,6 @@ pub fn router() -> Router<AppState> {
 pub struct ScheduleSlotResponse {
     pub id: Uuid,
     pub time_of_day: NaiveTime,
-    pub run_scenario: bool,
-    pub run_trade: bool,
     pub enabled: bool,
 }
 
@@ -34,8 +32,6 @@ impl From<ScheduleSlot> for ScheduleSlotResponse {
         Self {
             id: s.id,
             time_of_day: s.time_of_day,
-            run_scenario: s.run_scenario,
-            run_trade: s.run_trade,
             enabled: s.enabled,
         }
     }
@@ -56,8 +52,6 @@ pub struct ScheduleResponse {
 #[derive(Debug, Deserialize)]
 pub struct SlotRequest {
     pub time_of_day: NaiveTime,
-    pub run_scenario: bool,
-    pub run_trade: bool,
     pub enabled: bool,
 }
 
@@ -122,13 +116,7 @@ async fn upsert_schedule(
     for slot in &req.slots {
         state
             .schedule_write_repo
-            .upsert_slot(
-                schedule_id,
-                slot.time_of_day,
-                slot.run_scenario,
-                slot.run_trade,
-                slot.enabled,
-            )
+            .upsert_slot(schedule_id, slot.time_of_day, slot.enabled)
             .await
             .map_err(|e| ApiError::from(AppError::Internal(e)))?;
     }

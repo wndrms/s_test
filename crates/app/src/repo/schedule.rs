@@ -21,7 +21,6 @@ pub trait ScheduleRunRepository: Send + Sync {
         &self,
         manager_id: Uuid,
         schedule_slot_id: Uuid,
-        run_type: &str,
         scheduled_for: DateTime<Utc>,
         idempotency_key: &str,
     ) -> Result<Option<ScheduleRun>>;
@@ -48,8 +47,6 @@ pub trait ManagerScheduleWriteRepository: Send + Sync {
         &self,
         schedule_id: Uuid,
         time_of_day: NaiveTime,
-        run_scenario: bool,
-        run_trade: bool,
         enabled: bool,
     ) -> Result<()>;
 

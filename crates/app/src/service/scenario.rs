@@ -4,8 +4,8 @@ use uuid::Uuid;
 use rust_decimal::Decimal;
 
 use lumos_domain::model::scenario::{
-    EvidenceCard, EvidenceSourceType, RecommendedAction, ScenarioAction, ScenarioItem,
-    ScenarioStatus,
+    validate_scenario_output, EvidenceCard, EvidenceSourceType, RecommendedAction, ScenarioAction,
+    ScenarioItem, ScenarioStatus,
 };
 use lumos_domain::port::llm::{
     CriticReview, LlmProvider, NewsEventAnalysis, ScenarioOutput, ScenarioPromptInput,
@@ -160,6 +160,24 @@ impl ScenarioService {
                 }
             }
         };
+
+        // 3-1. 스키마 검증 — 계약(scenario_output.schema.json) 위반 시 거부 + 로깅
+        if let Err(validation_err) = validate_scenario_output(&output) {
+            tracing::warn!(
+                manager_id = %manager_id,
+                symbol = %symbol.code,
+                run_id = %run.id,
+                error = %validation_err,
+                "scenario output failed schema validation — rejecting run"
+            );
+            let _ = self
+                .scenario_run_repo
+                .update_status(run.id, ScenarioStatus::Rejected)
+                .await;
+            return Err(AppError::Validation(format!(
+                "시나리오 출력 스키마 검증 실패: {validation_err}"
+            )));
+        }
 
         // 4. AnalysisReport 저장 (report_repo 주입된 경우)
         let report_id = if let Some(repo) = &self.report_repo {
@@ -499,6 +517,279 @@ mod tests {
     use lumos_domain::model::scenario::ScenarioType;
     use rust_decimal::Decimal;
     use uuid::Uuid;
+
+    // ── 실행 경로 통합 테스트용 in-memory fake ────────────────────────────────
+    mod pipeline_integration {
+        use super::*;
+        use anyhow::Result;
+        use async_trait::async_trait;
+        use chrono::Utc;
+        use rust_decimal_macros::dec;
+        use std::sync::Mutex;
+        use lumos_domain::model::scenario::{ScenarioRun, ScenarioStatus};
+        use lumos_domain::model::symbol::{Currency, Region, Symbol, SymbolIdentifier};
+        use lumos_domain::model::scenario::RecommendedAction as RA;
+        use lumos_domain::port::llm::{LlmProvider, ScenarioOutput, ScenarioPromptInput};
+        use crate::repo::scenario::{
+            CreateScenarioItemInput, CreateScenarioRunInput, EvidenceCardRepository,
+            ScenarioItemRepository, ScenarioRunRepository,
+        };
+        use crate::repo::symbol::SymbolRepository;
+
+        struct FakeSymbolRepo {
+            symbol: Symbol,
+        }
+        #[async_trait]
+        impl SymbolRepository for FakeSymbolRepo {
+            async fn find_by_id(&self, _id: Uuid) -> Result<Option<Symbol>> {
+                Ok(Some(self.symbol.clone()))
+            }
+            async fn find_by_ids(&self, _ids: &[Uuid]) -> Result<Vec<Symbol>> {
+                Ok(vec![self.symbol.clone()])
+            }
+            async fn find_by_code(&self, _r: &Region, _c: &str) -> Result<Option<Symbol>> {
+                Ok(Some(self.symbol.clone()))
+            }
+            async fn find_active(&self) -> Result<Vec<Symbol>> {
+                Ok(vec![self.symbol.clone()])
+            }
+            async fn find_identifiers(&self, _id: Uuid) -> Result<Vec<SymbolIdentifier>> {
+                Ok(vec![])
+            }
+            async fn search(&self, _q: &str, _r: Option<&Region>, _l: i64) -> Result<Vec<Symbol>> {
+                Ok(vec![self.symbol.clone()])
+            }
+        }
+
+        struct FakeEvidenceRepo;
+        #[async_trait]
+        impl EvidenceCardRepository for FakeEvidenceRepo {
+            async fn find_for_symbol(
+                &self,
+                _symbol_id: Uuid,
+                _types: &[EvidenceSourceType],
+                _limit: u32,
+            ) -> Result<Vec<EvidenceCard>> {
+                Ok(vec![])
+            }
+            async fn create(&self, card: EvidenceCard) -> Result<EvidenceCard> {
+                Ok(card)
+            }
+        }
+
+        struct FakeRunRepo {
+            status: Mutex<Option<ScenarioStatus>>,
+        }
+        #[async_trait]
+        impl ScenarioRunRepository for FakeRunRepo {
+            async fn create(&self, input: CreateScenarioRunInput) -> Result<ScenarioRun> {
+                Ok(ScenarioRun {
+                    id: Uuid::new_v4(),
+                    manager_id: input.manager_id,
+                    schedule_slot_id: input.schedule_slot_id,
+                    model_provider: input.model_provider,
+                    model_name: input.model_name,
+                    prompt_version: Some(input.prompt_version),
+                    status: ScenarioStatus::Generated,
+                    created_at: Utc::now(),
+                })
+            }
+            async fn update_status(&self, id: Uuid, status: ScenarioStatus) -> Result<ScenarioRun> {
+                *self.status.lock().unwrap() = Some(status.clone());
+                Ok(ScenarioRun {
+                    id,
+                    manager_id: Uuid::nil(),
+                    schedule_slot_id: None,
+                    model_provider: "mock".into(),
+                    model_name: "mock".into(),
+                    prompt_version: None,
+                    status,
+                    created_at: Utc::now(),
+                })
+            }
+            async fn find_latest_for_manager(&self, _m: Uuid, _l: u32) -> Result<Vec<ScenarioRun>> {
+                Ok(vec![])
+            }
+            async fn find_by_id(&self, _id: Uuid) -> Result<Option<ScenarioRun>> {
+                Ok(None)
+            }
+        }
+
+        struct FakeItemRepo {
+            saved: Mutex<usize>,
+        }
+        #[async_trait]
+        impl ScenarioItemRepository for FakeItemRepo {
+            async fn create_batch(
+                &self,
+                items: Vec<CreateScenarioItemInput>,
+            ) -> Result<Vec<ScenarioItem>> {
+                *self.saved.lock().unwrap() += items.len();
+                Ok(items.into_iter().map(|i| i.item).collect())
+            }
+            async fn find_by_run(&self, _run_id: Uuid) -> Result<Vec<ScenarioItem>> {
+                Ok(vec![])
+            }
+            async fn find_by_run_and_id(&self, _id: Uuid) -> Result<Option<ScenarioItem>> {
+                Ok(None)
+            }
+            async fn find_pending_for_manager(&self, _m: Uuid) -> Result<Vec<ScenarioItem>> {
+                Ok(vec![])
+            }
+        }
+
+        fn item(t: ScenarioType, a: ScenarioAction, prob: Decimal, rank: i32) -> ScenarioItem {
+            ScenarioItem {
+                id: Uuid::new_v4(),
+                scenario_run_id: Uuid::nil(),
+                analysis_report_id: None,
+                symbol_id: Uuid::nil(),
+                scenario_type: t,
+                action: a,
+                probability_pct: prob,
+                target_price: None,
+                stop_loss_price: None,
+                condition_text: "조건".into(),
+                strategy_text: "전략".into(),
+                risk_text: None,
+                rank_order: rank,
+            }
+        }
+
+        /// 유효한 3-시나리오를 반환하는 mock
+        struct ValidLlm;
+        #[async_trait]
+        impl LlmProvider for ValidLlm {
+            async fn generate_scenario(&self, input: ScenarioPromptInput) -> Result<ScenarioOutput> {
+                Ok(ScenarioOutput {
+                    symbol: input.symbol_code,
+                    base_price: input.base_price,
+                    analyzed_at: Utc::now(),
+                    analysis_summary: "유효 요약".into(),
+                    analysis_detail: None,
+                    scenarios: vec![
+                        item(ScenarioType::Bullish, ScenarioAction::Buy, dec!(45), 1),
+                        item(ScenarioType::Sideways, ScenarioAction::Hold, dec!(35), 2),
+                        item(ScenarioType::Bearish, ScenarioAction::Watch, dec!(20), 3),
+                    ],
+                    recommended_action: RA {
+                        action: ScenarioAction::Buy,
+                        reason: "강세 우위".into(),
+                        confidence_pct: dec!(45),
+                        order_intent: None,
+                    },
+                })
+            }
+        }
+
+        /// 확률 합계가 100이 아닌 잘못된 출력을 반환하는 mock
+        struct InvalidLlm;
+        #[async_trait]
+        impl LlmProvider for InvalidLlm {
+            async fn generate_scenario(&self, input: ScenarioPromptInput) -> Result<ScenarioOutput> {
+                Ok(ScenarioOutput {
+                    symbol: input.symbol_code,
+                    base_price: input.base_price,
+                    analyzed_at: Utc::now(),
+                    analysis_summary: "잘못된 요약".into(),
+                    analysis_detail: None,
+                    scenarios: vec![
+                        item(ScenarioType::Bullish, ScenarioAction::Buy, dec!(80), 1),
+                        item(ScenarioType::Sideways, ScenarioAction::Hold, dec!(80), 2),
+                        item(ScenarioType::Bearish, ScenarioAction::Watch, dec!(80), 3),
+                    ],
+                    recommended_action: RA {
+                        action: ScenarioAction::Buy,
+                        reason: "근거".into(),
+                        confidence_pct: dec!(50),
+                        order_intent: None,
+                    },
+                })
+            }
+        }
+
+        fn fake_symbol() -> Symbol {
+            Symbol {
+                id: Uuid::new_v4(),
+                region: Region::Kr,
+                market: "KOSPI".into(),
+                code: "005930".into(),
+                display_code: "005930".into(),
+                name_ko: Some("삼성전자".into()),
+                name_en: Some("Samsung".into()),
+                currency: Currency::Krw,
+                active: true,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            }
+        }
+
+        fn build_service(
+            llm: Arc<dyn LlmProvider>,
+        ) -> (ScenarioService, Arc<FakeRunRepo>, Arc<FakeItemRepo>) {
+            let run_repo = Arc::new(FakeRunRepo { status: Mutex::new(None) });
+            let item_repo = Arc::new(FakeItemRepo { saved: Mutex::new(0) });
+            let svc = ScenarioService::new(
+                llm,
+                Arc::new(FakeEvidenceRepo),
+                run_repo.clone(),
+                item_repo.clone(),
+                Arc::new(FakeSymbolRepo { symbol: fake_symbol() }),
+            );
+            (svc, run_repo, item_repo)
+        }
+
+        /// 유효한 LLM 출력은 검증을 통과하고 persist된다 (run 상태 Validated).
+        #[tokio::test]
+        async fn valid_output_validates_and_persists() {
+            let (svc, run_repo, item_repo) = build_service(Arc::new(ValidLlm));
+            let run_id = svc
+                .run_for_symbol(
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    None,
+                    "mock".into(),
+                    "mock".into(),
+                    "v1".into(),
+                    "75000".into(),
+                    vec![],
+                    None,
+                )
+                .await
+                .expect("valid output should succeed");
+            assert!(!run_id.is_nil());
+            assert_eq!(*item_repo.saved.lock().unwrap(), 3);
+            assert_eq!(
+                *run_repo.status.lock().unwrap(),
+                Some(ScenarioStatus::Validated)
+            );
+        }
+
+        /// 잘못된 LLM 출력은 거부되고 persist되지 않으며 run 상태가 Rejected가 된다.
+        #[tokio::test]
+        async fn invalid_output_rejected_and_not_persisted() {
+            let (svc, run_repo, item_repo) = build_service(Arc::new(InvalidLlm));
+            let result = svc
+                .run_for_symbol(
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    None,
+                    "mock".into(),
+                    "mock".into(),
+                    "v1".into(),
+                    "75000".into(),
+                    vec![],
+                    None,
+                )
+                .await;
+            assert!(matches!(result, Err(AppError::Validation(_))));
+            assert_eq!(*item_repo.saved.lock().unwrap(), 0);
+            assert_eq!(
+                *run_repo.status.lock().unwrap(),
+                Some(ScenarioStatus::Rejected)
+            );
+        }
+    }
 
     fn make_scenario(prob: u32) -> ScenarioItem {
         ScenarioItem {

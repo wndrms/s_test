@@ -1,6 +1,6 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -8,7 +8,6 @@ use lumos_domain::model::symbol::{Region, Symbol};
 use lumos_domain::port::disclosure::{DisclosureItem, DisclosureProvider};
 
 const SEC_SUBMISSIONS_BASE: &str = "https://data.sec.gov/submissions";
-const SEC_EDGAR_BASE: &str = "https://www.sec.gov/cgi-bin/browse-edgar";
 
 pub struct SecEdgarClient {
     http: Client,
@@ -26,6 +25,7 @@ impl SecEdgarClient {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // SEC 응답 스키마 문서화: cik/entity_type은 현재 직접 읽지 않음
 struct SecSubmissions {
     cik: String,
     #[serde(rename = "entityType")]

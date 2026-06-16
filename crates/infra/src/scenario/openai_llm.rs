@@ -409,7 +409,7 @@ fn parse_scenario_items(
         bail!("empty scenarios array");
     }
 
-    let mut items: Vec<ScenarioItem> = arr
+    let items: Vec<ScenarioItem> = arr
         .iter()
         .enumerate()
         .map(|(i, s)| {

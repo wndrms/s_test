@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::types::{
     AnalysisReportDto, HoldingDto, ManagerDto, ManagerSymbolDto, RiskPolicyDto, ScenarioItemDto,
-    ScenarioRunDto, TradeDto,
+    ScenarioRunDto, ScheduleDto, TradeDto, TradeCycleDto, UpsertScheduleRequest,
 };
 use lumos_domain::model::broker::BrokerAccount;
 
@@ -83,6 +83,24 @@ async fn post_json<B: serde::Serialize, T: serde::de::DeserializeOwned>(
         .with_context(|| format!("POST {url} json parse failed"))
 }
 
+/// 본문 없는 응답을 기대하는 PATCH 요청 (성공 여부만 확인).
+async fn patch_json_no_content<B: serde::Serialize>(path: &str, body: &B) -> Result<()> {
+    let url = format!("{}{}", base_url(), path);
+    let req = gloo_net::http::Request::patch(&url)
+        .json(body)
+        .with_context(|| format!("PATCH {url} serialize failed"))?;
+
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("PATCH {url} failed"))?;
+
+    if !resp.ok() {
+        anyhow::bail!("PATCH {url} returned {}", resp.status());
+    }
+    Ok(())
+}
+
 // ─── Manager ─────────────────────────────────────────────────────────────────
 
 pub async fn list_managers() -> Result<Vec<ManagerDto>> {
@@ -124,6 +142,18 @@ pub async fn list_scenarios(manager_id: Uuid) -> Result<Vec<ScenarioItemDto>> {
     list_scenario_items(manager_id, latest.id).await
 }
 
+// ─── Schedule ─────────────────────────────────────────────────────────────────
+
+/// 매니저 스케줄 조회. 미설정이면 None.
+pub async fn get_schedule(manager_id: Uuid) -> Result<Option<ScheduleDto>> {
+    get_json(&format!("/managers/{manager_id}/schedule")).await
+}
+
+/// 매니저 스케줄 저장 (전체 슬롯 덮어쓰기).
+pub async fn save_schedule(manager_id: Uuid, req: &UpsertScheduleRequest) -> Result<()> {
+    patch_json_no_content(&format!("/managers/{manager_id}/schedule"), req).await
+}
+
 // ─── Holdings ─────────────────────────────────────────────────────────────────
 
 pub async fn list_holdings(manager_id: Uuid) -> Result<Vec<HoldingDto>> {
@@ -134,6 +164,10 @@ pub async fn list_holdings(manager_id: Uuid) -> Result<Vec<HoldingDto>> {
 
 pub async fn list_trades(manager_id: Uuid) -> Result<Vec<TradeDto>> {
     get_json(&format!("/managers/{manager_id}/trades")).await
+}
+
+pub async fn list_trade_cycles(manager_id: Uuid) -> Result<Vec<TradeCycleDto>> {
+    get_json(&format!("/managers/{manager_id}/trade-cycles")).await
 }
 
 // ─── Analysis Reports ─────────────────────────────────────────────────────────
@@ -205,60 +239,6 @@ pub async fn create_llm_key(provider: &str, label: &str, api_key: &str) -> Resul
 
 pub async fn delete_llm_key(key_id: Uuid) -> Result<()> {
     delete_json(&format!("/llm-keys/{key_id}")).await
-}
-
-// ─── Scenarios ────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct TriggerScenarioRunRequest {
-    symbol_id: Uuid,
-    schedule_slot_id: Option<Uuid>,
-    model_provider: String,
-    model_name: String,
-    prompt_version: String,
-    base_price: String,
-    llm_key_id: Option<Uuid>,
-}
-
-pub async fn trigger_scenario_run(
-    manager_id: Uuid,
-    symbol_id: Uuid,
-    llm_key_id: Option<Uuid>,
-    model_name: &str,
-    base_price: &str,
-) -> Result<Uuid> {
-    let provider = if llm_key_id.is_some() {
-        // 키가 있으면 해당 키의 프로바이더 사용
-        "user".to_string()
-    } else {
-        // 서버 기본 LLM 사용
-        if model_name.starts_with("gemini") {
-            "gemini".to_string()
-        } else {
-            "openai".to_string()
-        }
-    };
-
-    #[derive(Debug, Deserialize)]
-    struct TriggerResponse {
-        run_id: Uuid,
-    }
-
-    let resp: TriggerResponse = post_json(
-        &format!("/managers/{manager_id}/scenarios/runs"),
-        &TriggerScenarioRunRequest {
-            symbol_id,
-            schedule_slot_id: None,
-            model_provider: provider,
-            model_name: model_name.to_string(),
-            prompt_version: "v1".to_string(),
-            base_price: base_price.to_string(),
-            llm_key_id,
-        },
-    )
-    .await?;
-
-    Ok(resp.run_id)
 }
 
 // ─── Symbols ──────────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ use uuid::Uuid;
 use lumos_domain::model::broker::{
     BrokerAccount, BrokerFill, BrokerOrderResponse, BrokerOrderStatus, BrokerPosition,
     BuyingPower, BuyingPowerRequest, CancelOrderRequest, LimitOrderRequest, OrderFillQuery,
-    OrderSide,
+    OrderSide, PortfolioSnapshot,
 };
 use lumos_domain::model::symbol::Currency;
 use lumos_domain::port::broker::Broker;
@@ -35,6 +35,7 @@ impl PaperPosition {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // idempotency_key/created_at은 주문 메타 보존용 (현재 미참조)
 struct PaperOrder {
     id: Uuid,
     symbol_code: String,
@@ -70,8 +71,15 @@ impl PaperState {
     }
 
     fn total_equity(&self) -> Decimal {
-        let invested: Decimal = self.positions.values().map(|p| p.market_value()).sum();
-        self.cash + invested
+        self.cash + self.invested_value()
+    }
+
+    fn invested_value(&self) -> Decimal {
+        self.positions.values().map(|p| p.market_value()).sum()
+    }
+
+    fn unrealized_pnl(&self) -> Decimal {
+        self.positions.values().map(|p| p.unrealized_pnl()).sum()
     }
 }
 
@@ -108,6 +116,31 @@ impl PaperBroker {
             quotes.get(code).copied().unwrap_or(dec!(0))
         });
         Self::new(broker_connection_id, initial_cash, currency, source)
+    }
+
+    /// 현재 시점의 포트폴리오 스냅샷을 생성한다.
+    /// 보유 종목은 quote_source의 현재가로 평가(mark-to-market)한다.
+    pub async fn portfolio_snapshot(&self) -> PortfolioSnapshot {
+        let mut state = self.state.write().await;
+        // 보유 종목을 최신 시세로 평가 갱신
+        let codes: Vec<String> = state.positions.keys().cloned().collect();
+        for code in codes {
+            let price = (self.quote_source)(&code);
+            if price > Decimal::ZERO {
+                if let Some(pos) = state.positions.get_mut(&code) {
+                    pos.current_price = price;
+                }
+            }
+        }
+        PortfolioSnapshot {
+            equity: state.total_equity(),
+            cash: state.cash,
+            invested_value: state.invested_value(),
+            unrealized_pnl: state.unrealized_pnl(),
+            realized_pnl: state.realized_pnl,
+            currency: state.currency.clone(),
+            as_of: Utc::now(),
+        }
     }
 
     /// Immediately simulates fill at limit_price (paper mode: instant fill).
@@ -344,5 +377,36 @@ mod tests {
         broker.place_limit_order(buy_req("005930", dec!(5), dec!(75000))).await.unwrap();
         let result = broker.place_limit_order(sell_req("005930", dec!(10), dec!(75000))).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn portfolio_snapshot_captures_state() {
+        let broker = make_broker(dec!(1000000));
+        // 10주 @70000 매수 → 현금 300000, 현재가 75000 평가
+        broker.place_limit_order(buy_req("005930", dec!(10), dec!(70000))).await.unwrap();
+
+        let snap = broker.portfolio_snapshot().await;
+        assert_eq!(snap.cash, dec!(300000));
+        // 평가액 = 10 * 75000(quote) = 750000
+        assert_eq!(snap.invested_value, dec!(750000));
+        assert_eq!(snap.equity, dec!(1050000));
+        // 평가손익 = (75000 - 70000) * 10 = 50000
+        assert_eq!(snap.unrealized_pnl, dec!(50000));
+        assert_eq!(snap.realized_pnl, Decimal::ZERO);
+    }
+
+    #[tokio::test]
+    async fn snapshot_realized_pnl_after_sell() {
+        let broker = make_broker(dec!(1000000));
+        broker.place_limit_order(buy_req("005930", dec!(10), dec!(70000))).await.unwrap();
+        broker.place_limit_order(sell_req("005930", dec!(10), dec!(75000))).await.unwrap();
+
+        let snap = broker.portfolio_snapshot().await;
+        // 전량 청산: 보유 없음, 실현손익 = (75000-70000)*10 = 50000
+        assert_eq!(snap.invested_value, Decimal::ZERO);
+        assert_eq!(snap.unrealized_pnl, Decimal::ZERO);
+        assert_eq!(snap.realized_pnl, dec!(50000));
+        assert_eq!(snap.cash, dec!(1050000));
+        assert_eq!(snap.equity, dec!(1050000));
     }
 }

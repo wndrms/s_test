@@ -29,7 +29,7 @@ use lumos_infra::db::repo::scenario::{
 };
 use lumos_infra::db::repo::schedule::PgManagerScheduleRepository;
 use lumos_infra::db::repo::schedule_mgmt::PgManagerScheduleWriteRepository;
-use lumos_infra::db::repo::trades::PgTradesRepository;
+use lumos_infra::db::repo::trade_cycle::PgTradeCycleRepository;
 use lumos_infra::db::repo::symbol::PgSymbolRepository;
 use lumos_infra::db::repo::user::PgSecretKeyRepository;
 use lumos_app::service::llm_key::{LlmKeyService, LlmProviderFactory};
@@ -118,7 +118,8 @@ async fn main() -> anyhow::Result<()> {
         };
 
     let holdings_repo = Arc::new(PgHoldingsRepository::new(pool.clone()));
-    let trades_repo = Arc::new(PgTradesRepository::new(pool.clone()));
+    let trade_cycle_repo: Arc<dyn lumos_app::repo::trade_cycle::TradeCycleRepository> =
+        Arc::new(PgTradeCycleRepository::new(pool.clone()));
     let schedule_read_repo = Arc::new(PgManagerScheduleRepository::new(pool.clone()));
     let schedule_write_repo = Arc::new(PgManagerScheduleWriteRepository::new(pool.clone()));
     let analysis_report_repo: Arc<dyn lumos_app::repo::analysis_report::AnalysisReportRepository> =
@@ -169,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
         scenario_service,
         symbol_repo,
         holdings_repo,
-        trades_repo,
+        trade_cycle_repo,
         schedule_read_repo,
         schedule_write_repo,
         analysis_report_repo,

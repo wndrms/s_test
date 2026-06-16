@@ -39,6 +39,10 @@ pub struct ManagerResponse {
     pub base_currency: String,
     pub auto_trade_enabled: bool,
     pub status: String,
+    pub initial_capital: Decimal,
+    pub llm_key_id: Option<Uuid>,
+    pub model_provider: String,
+    pub model_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +62,10 @@ impl From<Manager> for ManagerResponse {
             base_currency: m.base_currency.to_string(),
             auto_trade_enabled: m.auto_trade_enabled,
             status: format!("{:?}", m.status).to_lowercase(),
+            initial_capital: m.initial_capital,
+            llm_key_id: m.llm_key_id,
+            model_provider: m.model_provider,
+            model_name: m.model_name,
         }
     }
 }
@@ -72,6 +80,15 @@ pub struct CreateManagerRequest {
     pub base_currency: String,
     #[serde(default)]
     pub initial_capital: Option<Decimal>,
+    /// 연결할 LLM 키 ID. None이면 서버 기본 LLM 사용.
+    #[serde(default)]
+    pub llm_key_id: Option<Uuid>,
+    /// LLM 프로바이더 ('openai' | 'gemini'). 미지정 시 'openai'.
+    #[serde(default)]
+    pub model_provider: Option<String>,
+    /// 모델명 (예: 'gpt-4o-mini'). 미지정 시 기본값 사용.
+    #[serde(default)]
+    pub model_name: Option<String>,
     #[serde(default)]
     pub kis_app_key: Option<String>,
     #[serde(default)]
@@ -183,6 +200,23 @@ async fn create_manager(
             .unwrap_or(Decimal::ZERO),
     };
 
+    // LLM 연결 설정 결정. llm_key_id가 주어지면 소유권을 검증한다.
+    if let Some(key_id) = req.llm_key_id {
+        state
+            .llm_key_service
+            .get(auth_user.user_id, key_id)
+            .await
+            .map_err(ApiError::from)?;
+    }
+    let model_provider = req
+        .model_provider
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "openai".to_string());
+    let model_name = req
+        .model_name
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "gpt-4o-mini".to_string());
+
     let input = CreateManagerInput {
         user_id: auth_user.user_id,
         broker_connection_id: broker_connection.id,
@@ -191,6 +225,9 @@ async fn create_manager(
         region,
         base_currency: currency,
         initial_capital,
+        llm_key_id: req.llm_key_id,
+        model_provider,
+        model_name,
     };
 
     let manager = state
@@ -338,7 +375,69 @@ async fn resolve_broker_connection(
         });
     }
 
-    create_env_broker_connection(state, user_id).await
+    // 모의(paper) 모드는 실제 KIS 자격증명 없이도 broker connection을 만들 수 있어야 한다.
+    // 라이브 모드만 환경변수의 KIS 키를 요구한다.
+    match mode {
+        ManagerMode::Paper => create_paper_broker_connection(state, user_id).await,
+        ManagerMode::Live => create_env_broker_connection(state, user_id).await,
+    }
+}
+
+/// 모의 모드 전용 broker connection. 실제 KIS 인증 없이 placeholder 시크릿으로 생성한다.
+async fn create_paper_broker_connection(
+    state: &AppState,
+    user_id: Uuid,
+) -> ApiResult<BrokerConnectionResolution> {
+    let app_key_secret_id =
+        ensure_paper_secret(state, user_id, "paper_app_key", "paper-app-key").await?;
+    let app_secret_secret_id =
+        ensure_paper_secret(state, user_id, "paper_app_secret", "paper-app-secret").await?;
+    let account_no = "paper-account";
+    let account_no_encrypted = state
+        .secret_service
+        .encrypt_payload(account_no.as_bytes())
+        .map_err(ApiError::from)?;
+    let account_no_masked = format!("{}-01", state.secret_service.mask(account_no));
+
+    let conn = state
+        .broker_connection_repo
+        .create(
+            user_id,
+            BrokerEnvironment::Paper,
+            account_no_masked,
+            account_no_encrypted,
+            app_key_secret_id,
+            app_secret_secret_id,
+        )
+        .await
+        .map_err(|e| ApiError::from(AppError::Internal(e)))?;
+
+    Ok(BrokerConnectionResolution {
+        id: conn.id,
+        account: None,
+    })
+}
+
+/// 모의 모드용 placeholder 시크릿을 멱등하게 확보한다 (이미 있으면 재사용).
+async fn ensure_paper_secret(
+    state: &AppState,
+    user_id: Uuid,
+    label: &str,
+    raw_value: &str,
+) -> ApiResult<Uuid> {
+    let existing = state.secret_service.list_for_user(user_id).await?;
+    if let Some(secret) = existing
+        .into_iter()
+        .find(|secret| secret.provider == "kis" && secret.label == label)
+    {
+        return Ok(secret.id);
+    }
+
+    let secret = state
+        .secret_service
+        .store(user_id, "kis".to_string(), label.to_string(), raw_value)
+        .await?;
+    Ok(secret.id)
 }
 
 async fn create_kis_broker_connection(
@@ -355,14 +454,21 @@ async fn create_kis_broker_connection(
         ManagerMode::Live => BrokerEnvironment::Real,
         _ => BrokerEnvironment::Paper,
     };
-    let client = build_kis_client(
-        app_key,
-        app_secret,
-        account_no,
-        account_product,
-        environment.clone(),
-    );
-    let account = validate_kis_balance(&client, region).await?;
+    // 모의(paper) 모드는 실제 KIS 인증/잔고 조회 없이 입력한 자본금을 사용한다.
+    // 라이브 모드에서만 실제 계좌 잔고를 검증한다.
+    let account = match mode {
+        ManagerMode::Live => {
+            let client = build_kis_client(
+                app_key,
+                app_secret,
+                account_no,
+                account_product,
+                environment.clone(),
+            );
+            Some(validate_kis_balance(&client, region).await?)
+        }
+        ManagerMode::Paper => None,
+    };
 
     let app_key_secret = state
         .secret_service
@@ -407,7 +513,7 @@ async fn create_kis_broker_connection(
 
     Ok(BrokerConnectionResolution {
         id: conn.id,
-        account: Some(account),
+        account,
     })
 }
 
